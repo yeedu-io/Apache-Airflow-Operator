@@ -1,4 +1,5 @@
 # Airflow Yeedu Operator
+[![PyPI version](https://badge.fury.io/py/airflow-yeedu-operator.svg)](https://badge.fury.io/py/airflow-yeedu-operator)
 
 ## Installation
 
