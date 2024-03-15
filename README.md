@@ -58,13 +58,13 @@ Create tasks using `YeeduJobRunOperator` to perform various Yeedu API operations
 
 ```python
     submit_job_task = YeeduJobRunOperator(
-    task_id='submit_yeedu_job',
-    job_conf_id='your_job_config_id',  # Replace with your job config ID
-    token='your_yeedu_api_token',  # Replace with your Yeedu API token
-    hostname='yeedu.example.com',  # Replace with your Yeedu API hostname
-    workspace_id=123,  # Replace with your Yeedu workspace ID
-    dag=dag,
-)
+        dag=dag,
+        task_id='demo_dag',
+        hostname='yeedu.example.com',  # Replace with your Yeedu API hostname
+        token='your_yeedu_api_token',  # Replace with your Yeedu API token
+        job_conf_id='your_job_config_id',  # Replace with your job config ID
+        workspace_id='your_workspace_id',  # Replace with your Yeedu workspace ID
+    )
 ```
 ### Execution
 

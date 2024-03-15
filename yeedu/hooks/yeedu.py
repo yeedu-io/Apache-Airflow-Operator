@@ -136,7 +136,7 @@ class YeeduHook(BaseHook):
 
         try:
             logs_url: str = self.base_url + f'spark/job/{job_id}/log/{log_type}'
-            time.sleep(10)
+            time.sleep(30)
             return self._api_request('GET', logs_url).text
         
         except Exception as e:
