@@ -13,7 +13,7 @@ pip3 install airflow-yeedu-operator
 
 ## Overview
 
-The `YeeduJobRunOperator` in this DAG facilitates the submission and monitoring of jobs using the Yeedu API in Apache Airflow. This DAG enables users to execute Yeedu jobs and handle their completion status and logs seamlessly within their Airflow environment.
+The `YeeduOperator` in this DAG facilitates the submission and monitoring of jobs and notebooks using the Yeedu API in Apache Airflow. This DAG enables users to execute Yeedu jobs and handle their completion status and logs seamlessly within their Airflow environment.
 
 ## Prerequisites
 
@@ -57,21 +57,25 @@ Create tasks using `YeeduJobRunOperator` to perform various Yeedu API operations
 # Define YeeduJobRunOperator tasks
 
 ```python
-    submit_job_task = YeeduJobRunOperator(
-        dag=dag,
+
+    submit_job_task = YeeduOperator(
         task_id='demo_dag',
-        hostname='yeedu.example.com',  # Replace with your Yeedu API hostname
-        token='your_yeedu_api_token',  # Replace with your Yeedu API token
-        job_conf_id='your_job_config_id',  # Replace with your job config ID
+        conf_id='config_id',  # Replace with your job config ID or Notebook Config ID
+        tenant_id='tenant_id',  # Replace with your Yeedu tenant_id
+        base_url='http://hostname:8080/api/v1/',  # Replace with your Yeedu API URL
         workspace_id='your_workspace_id',  # Replace with your Yeedu workspace ID
+        dag=dag,
     )
+
 ```
 ### Execution
 
 To execute this DAG:
 
-1. Ensure all required configurations (job config ID, API token, hostname, workspace ID) are correctly provided in the task definitions.
+1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions.
+and YEEDU_SCHEDULER_USER and YEEDU_SCHEDULER_PASSWORD are addded as Environment Variables.
 2. Place the DAG file in the appropriate Airflow DAGs folder.
 3. Trigger the DAG manually or based on the defined schedule interval.
 4. Monitor the Airflow UI for task execution and logs.
+
 

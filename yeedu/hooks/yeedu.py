@@ -28,6 +28,19 @@ import logging
 from typing import Tuple
 from airflow.hooks.base import BaseHook
 from airflow.exceptions import AirflowException
+from typing import Optional, Dict
+import json
+import os
+
+
+
+YEEDU_SCHEDULER_USER = os.getenv("YEEDU_SCHEDULER_USER")
+YEEDU_SCHEDULER_PASSWORD = os.getenv("YEEDU_SCHEDULER_PASSWORD")
+
+headers: dict = {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
 
 class YeeduHook(BaseHook):
     """
@@ -43,25 +56,22 @@ class YeeduHook(BaseHook):
     :param kwargs: Additional keyword arguments.
     """
 
-    def __init__(self, token: str, hostname: str, workspace_id: int, *args, **kwargs) -> None:
+    def __init__(self, conf_id: int, tenant_id: str, base_url: str, workspace_id: int, *args, **kwargs) -> None:
         """
         Initializes YeeduHook with the necessary configurations to communicate with the Yeedu API.
 
-        :param token: Yeedu API token.
-        :param hostname: Yeedu API hostname.
+        :param tenant_id: Yeedu API tenant_id.
+        :param base_url: Yeedu API base_url.
         :param workspace_id: The ID of the Yeedu workspace.
         """
 
         super().__init__(*args, **kwargs)
-        self.token: str = token
-        self.headers: dict = {
-            'accept': 'application/json',
-            'Authorization': f"Bearer {token}",
-            'Content-Type': 'application/json'
-        }
-        self.base_url: str = f'http://{hostname}/api/v1/workspace/{workspace_id}/'
+        self.tenant_id: str = tenant_id
+        self.conf_id = conf_id
+        self.workspace_id = workspace_id
+        self.base_url: str = base_url
 
-    def _api_request(self, method: str, url: str, data=None) -> requests.Response:
+    def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None) -> requests.Response:
         """
         Makes an HTTP request to the Yeedu API.
 
@@ -72,14 +82,73 @@ class YeeduHook(BaseHook):
         """
 
         try:
-            response: requests.Response = requests.request(method, url, headers=self.headers, json=data)
+            response: requests.Response = requests.request(method, url, headers=headers, json=data, params=params)
             return response
                         
         except Exception as e:
             raise AirflowException(e)
             
 
+    def yeedu_login(self):
+        try:
+            login_url = self.base_url+'login'
+            data = {
+                    "username": f"{YEEDU_SCHEDULER_USER}",
+                    "password": f"{YEEDU_SCHEDULER_PASSWORD}"
+                }
+            # self.log.info(f"{data},{YEEDU_SCHEDULER_USER},{YEEDU_SCHEDULER_PASSWORD}")
+            login_response = self._api_request('POST',login_url,data)
 
+            if login_response.status_code == 200:
+                self.log.info(
+                    f'Login successful. Token: {login_response.json().get("token")}')
+                headers['Authorization'] = f"Bearer {login_response.json().get('token')}"
+                self.associate_tenant()
+                return login_response.json().get('token')
+            else:
+                raise AirflowException(login_response.text)
+        except Exception as e:
+            self.log.info(f"An error occurred during yeedu_login: {e}")
+            raise AirflowException(e)
+
+    def associate_tenant(self):
+        try:
+            # Construct the tenant URL
+            tenant_url = self.base_url+f'user/select/{self.tenant_id}'
+
+            # Make the POST request to associate the tenant
+            tenant_associate_response = self._api_request('POST',tenant_url)
+
+            if tenant_associate_response.status_code == 201:
+                self.log.info(
+                    f'Tenant associated successfully. Status Code: {tenant_associate_response.status_code}')
+                self.log.info(
+                    f'Tenant Association Response: {tenant_associate_response.json()}')
+                return 0
+            else:
+                raise AirflowException(tenant_associate_response.text)
+        except Exception as e:
+            self.log.info(f"An error occurred during associate_tenant: {e}")
+            raise AirflowException(e)  
+        
+    def get_job_type(self):
+
+        # URL for notebook configuration API
+        notebook_url = self.base_url + f'workspace/{self.workspace_id}/notebook/conf?notebook_conf_id={self.conf_id}'
+        response_notebook = self._api_request('GET',notebook_url)
+        # self.log.info("notebookresponse",response_notebook.json())
+        # URL for job configuration API
+        job_url = self.base_url + f'workspace/{self.workspace_id}/spark/job/conf?job_conf_id={self.conf_id}'
+        response_job = self._api_request('GET',job_url)
+        # self.log.info(response_job.json())
+        # Check status codes and return job type
+        if response_notebook.status_code == 200:
+            return 'notebook'
+        elif response_job.status_code == 200:
+            return 'job'
+        else:
+            return None
+        
     def submit_job(self, job_conf_id: str) -> int:
         """
         Submits a job to Yeedu.
@@ -89,7 +158,7 @@ class YeeduHook(BaseHook):
         """
 
         try:
-            job_url: str = self.base_url + 'spark/job'
+            job_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job'
             data: dict = {'job_conf_id': job_conf_id}
             response = self._api_request('POST', job_url, data)
             api_status_code = response.status_code
@@ -117,7 +186,7 @@ class YeeduHook(BaseHook):
         """
 
         try:
-            job_status_url: str = self.base_url + f'spark/job/{job_id}'
+            job_status_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/{job_id}'
             return self._api_request('GET', job_status_url)
                         
         except Exception as e:
@@ -135,7 +204,7 @@ class YeeduHook(BaseHook):
         """
 
         try:
-            logs_url: str = self.base_url + f'spark/job/{job_id}/log/{log_type}'
+            logs_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/{job_id}/log/{log_type}'
             time.sleep(30)
             return self._api_request('GET', logs_url).text
         
@@ -182,3 +251,4 @@ class YeeduHook(BaseHook):
         
         except Exception as e:
             raise AirflowException(e)
+        
