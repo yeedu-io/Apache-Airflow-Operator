@@ -22,6 +22,15 @@ Before using this DAG, ensure you have:
 - Access to the Yeedu API.
 - Proper configuration of Airflow with required connections and variables (if applicable).
 
+1. Open your shell configuration file (`.bashrc` for Bash).
+2. Add the below lines
+
+   ```bash
+   export YEEDU_SCHEDULER_USER=example@test.com
+   export YEEDU_SCHEDULER_PASSWORD=password
+
+   ```
+
 ## Usage
 
 ### DAG Initialization
@@ -31,7 +40,7 @@ Import the necessary modules and instantiate the DAG with required arguments and
 ```python
 from datetime import datetime, timedelta
 from airflow import DAG
-from yeedu.operators.yeedu import YeeduJobRunOperator
+from yeedu.operators.yeedu import YeeduOperator
 
 # Define DAG arguments
 default_args = {
@@ -53,8 +62,8 @@ dag = DAG(
 ```
 ### Task Initialization
 
-Create tasks using `YeeduJobRunOperator` to perform various Yeedu API operations.
-# Define YeeduJobRunOperator tasks
+Create tasks using `YeeduOperator` to perform various Yeedu API operations.
+# Define YeeduOperator tasks
 
 ```python
 
@@ -72,8 +81,8 @@ Create tasks using `YeeduJobRunOperator` to perform various Yeedu API operations
 
 To execute this DAG:
 
-1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions.
-and YEEDU_SCHEDULER_USER and YEEDU_SCHEDULER_PASSWORD are addded as Environment Variables.
+1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions,
+and YEEDU_SCHEDULER_USER, YEEDU_SCHEDULER_PASSWORD are added as Environment Variables.
 2. Place the DAG file in the appropriate Airflow DAGs folder.
 3. Trigger the DAG manually or based on the defined schedule interval.
 4. Monitor the Airflow UI for task execution and logs.
