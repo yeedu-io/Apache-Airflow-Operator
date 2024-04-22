@@ -189,6 +189,7 @@ class YeeduJobRunOperator():
             logger.info("Logs for Job ID %s (Log Type: %s): %s", job_id, log_type, job_log)
 
             if job_status in ['ERROR', 'TERMINATED', 'KILLED']:
+                logger.error(job_log)
                 raise AirflowException(job_log)
                        
         except Exception as e:
