@@ -204,6 +204,9 @@ YeeduNotebookRunOperator
 
 class YeeduNotebookRunOperator():
 
+    content_status = None 
+    error_value = None
+
     @apply_defaults
     def __init__(self, base_url, workspace_id, notebook_conf_id, tenant_id, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -347,7 +350,7 @@ class YeeduNotebookRunOperator():
             # Construct WebSocket token URL
             proxy_url = self.base_url + f'workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/ws'
 
-            logger.info(f"WebSocket Token URL: {proxy_url}")
+            #logger.info(f"WebSocket Token URL: {proxy_url}")
 
 
             # hit proxy api to create web socket connection
@@ -366,7 +369,7 @@ class YeeduNotebookRunOperator():
                 # creating web socket url
                 websocket_url = self.base_url + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/ws/yeedu_session/{token}"
                 websocket_url = websocket_url.replace('http://', 'ws://').replace('https://', 'ws://')
-                logger.info(f"WebSocket URL: {websocket_url}")
+                #logger.info(f"WebSocket URL: {websocket_url}")
                 return websocket_url
             else:
                 raise Exception(
@@ -522,7 +525,7 @@ class YeeduNotebookRunOperator():
             self.notebook_cells.clear()
 
             self.stop_notebook()
-            raise Exception(exit_reason)
+            #raise Exception(exit_reason)
         except Exception as e:
             logger.error(f'Error while exiting notebook: {e}')
             raise e
@@ -540,11 +543,11 @@ class YeeduNotebookRunOperator():
             elif msg_type == 'error':
                 content = response.get('content', {})
                 error_name = content.get('ename', '')
-                error_value = content.get('evalue', '')
+                self.error_value = content.get('evalue', '')
                 traceback = content.get('traceback', [])
-                logger.error(f"Error: {error_name} - {error_value}")
+                logger.error(f"Error: {error_name} - {self.error_value}")
                 logger.error("Traceback:")
-                logger.info(error_value)
+                #logger.info(self.error_value)
                 for tb in traceback:
                     logger.error(tb)
             elif msg_type == 'execute_input':
@@ -579,11 +582,11 @@ class YeeduNotebookRunOperator():
             elif msg_type == 'execute_reply':
                 content = response.get('content', {})
                 logger.info(f"Content {content}")
-                content_status = content.get('status', '')
-                logger.info(content_status)
+                self.content_status = content.get('status', '')
+                logger.info(self.content_status)
                 msg_id = response['parent_header']['msg_id']
                 logger.info(f"Message Id: {msg_id}")
-                if content_status == 'ok':
+                if self.content_status == 'ok':
                     try:
                         logger.info('Removing notebook cells ...')
 
@@ -594,18 +597,18 @@ class YeeduNotebookRunOperator():
                             f"Notebook cells array after removing {msg_id}: {self.notebook_cells}")
                     except ValueError:
                         pass
-                elif content_status == 'error':
-                    error_value = content.get('evalue', '')
+                elif self.content_status == 'error':
+                    self.error_value = content.get('evalue', '')
                     traceback = content.get('traceback', [])
                     logger.info(traceback)
 
                     self.notebook_executed = False
 
                     self.exit_notebook(
-                        f'cell with message_id: {msg_id} failed with error: {error_value}')
+                        f'cell with message_id: {msg_id} failed with error: {self.error_value}')
                 else:
                     raise Exception(
-                        f"Invalid content_status: {content_status}")
+                        f"Invalid self.content_status: {self.content_status}")
 
         except Exception as e:
             logger.error(f"Unsupported message type: {e}")
@@ -724,7 +727,12 @@ class YeeduNotebookRunOperator():
                     self.exit_notebook(
                         f'Exiting notebook from main function: {e}')
 
+            ws.close()
+
+            if self.content_status == 'error': 
+                raise AirflowException(f"{self.error_value}")
+
         except Exception as e:
             logger.error(
-                f"Error occured while executing notebook in final main except block: {e}")
+                f"Notebook execution failed with error:  {e}")
             raise e
