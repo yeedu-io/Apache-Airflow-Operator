@@ -31,6 +31,8 @@ from airflow.exceptions import AirflowException
 from typing import Optional, Dict
 import json
 import os
+from requests.exceptions import RequestException
+
 
 
 
@@ -73,20 +75,17 @@ class YeeduHook(BaseHook):
 
     def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None) -> requests.Response:
         """
-        Makes an HTTP request to the Yeedu API.
+        Makes an HTTP request to the Yeedu API with retries.
 
         :param method: The HTTP method (GET, POST, etc.).
         :param url: The URL of the API endpoint.
         :param data: The JSON data for the request.
+        :param params: Optional dictionary of query parameters.
         :return: The API response.
         """
 
-        try:
-            response: requests.Response = requests.request(method, url, headers=headers, json=data, params=params)
-            return response
-                        
-        except Exception as e:
-            raise AirflowException(e)
+        response = requests.request(method, url, headers=headers, json=data, params=params)
+        return response  # Exit loop on successful response
             
 
     def yeedu_login(self):
@@ -185,12 +184,8 @@ class YeeduHook(BaseHook):
         :return: The API response containing job status.
         """
 
-        try:
-            job_status_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/{job_id}'
-            return self._api_request('GET', job_status_url)
-                        
-        except Exception as e:
-            raise AirflowException(e)
+        job_status_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/{job_id}'
+        return self._api_request('GET', job_status_url)
 
             
 
@@ -228,20 +223,23 @@ class YeeduHook(BaseHook):
             while True:
                 time.sleep(5)
                 # Check job status
-                response: requests.Response = self.get_job_status(job_id)
-                api_status_code: int = response.status_code
-                self.log.info("Current API Status Code: %s",api_status_code)
-                if api_status_code == 200:
-                    # If API status is a success, reset the failure attempts counter
-                    attempts_failure = 0
-                    job_status: str = response.json().get('job_status')
-                    self.log.info("Current Job Status: %s ", job_status)
-                    if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED']:
-                        break
-                # If API status is an error, increment the failure attempts counter
-                else:
+                try:
+                    response: requests.Response = self.get_job_status(job_id)
+                    api_status_code: int = response.status_code
+                    self.log.info("Current API Status Code: %s",api_status_code)
+                    if api_status_code == 200:
+                        # If API status is a success, reset the failure attempts counter
+                        attempts_failure = 0
+                        job_status: str = response.json().get('job_status')
+                        self.log.info("Current Job Status: %s ", job_status)
+                        if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED']:
+                            break
+                except RequestException as e:
                     attempts_failure += 1
-                    self.log.info("failure attempts : %s", attempts_failure)
+                    delay = 20
+                    self.log.info(f"GET Job Status API request failed (attempt {attempts_failure}/{max_attempts}) due to {e}")
+                    self.log.info(f"Sleeping for {delay*attempts_failure} seconds before retrying...")
+                    time.sleep(delay*attempts_failure)
 
                 # If continuous failures reach the threshold, throw an error
                 if attempts_failure == max_attempts:
