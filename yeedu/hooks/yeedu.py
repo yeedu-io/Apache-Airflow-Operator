@@ -35,6 +35,7 @@ from requests.exceptions import RequestException
 
 
 
+session = requests.Session()
 
 YEEDU_SCHEDULER_USER = os.getenv("YEEDU_SCHEDULER_USER")
 YEEDU_SCHEDULER_PASSWORD = os.getenv("YEEDU_SCHEDULER_PASSWORD")
@@ -84,7 +85,11 @@ class YeeduHook(BaseHook):
         :return: The API response.
         """
 
-        response = requests.request(method, url, headers=headers, json=data, params=params)
+        if method =='POST':
+            response = session.post(url, headers=headers, json=data, params=params)
+        else:
+            response = session.get(url, headers=headers, json=data, params=params)
+        #response = requests.request(method, url, headers=headers, json=data, params=params)
         return response  # Exit loop on successful response
             
 
