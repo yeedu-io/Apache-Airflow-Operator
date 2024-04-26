@@ -179,7 +179,7 @@ class YeeduJobRunOperator():
 
             if job_status in ['DONE']:
                 log_type: str = 'stdout'
-            elif job_status in ['ERROR', 'TERMINATED', 'KILLED']:
+            elif job_status in ['ERROR', 'TERMINATED', 'KILLED','STOPPED']:
                 log_type: str = 'stdout'
             else:
                 logger.error("Job completion status is unknown.")
@@ -188,7 +188,7 @@ class YeeduJobRunOperator():
             job_log: str = self.hook.get_job_logs(job_id, log_type)
             logger.info("Logs for Job ID %s (Log Type: %s): %s", job_id, log_type, job_log)
 
-            if job_status in ['ERROR', 'TERMINATED', 'KILLED']:
+            if job_status in ['ERROR', 'TERMINATED', 'KILLED','STOPPED']:
                 logger.error(job_log)
                 raise AirflowException(job_log)
                        

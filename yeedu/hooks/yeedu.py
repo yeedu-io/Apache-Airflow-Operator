@@ -237,7 +237,7 @@ class YeeduHook(BaseHook):
                         attempts_failure = 0
                         job_status: str = response.json().get('job_status')
                         self.log.info("Current Job Status: %s ", job_status)
-                        if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED']:
+                        if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED','STOPPED']:
                             break
                 except RequestException as e:
                     attempts_failure += 1
