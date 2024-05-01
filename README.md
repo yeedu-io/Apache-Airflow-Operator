@@ -26,18 +26,32 @@ Before using the YeeduOperator, ensure you have the following:
 - **Access to the Yeedu API**: You'll need valid credentials to interact with the Yeedu API.
 - **Proper Airflow Configuration**: Make sure Airflow is configured with the necessary connections and variables (if applicable) to connect to Yeedu and Airflow resources.
 - **Setting Up Environment Variables (For Bash)**:
-If you're using Bash and prefer to set Yeedu credentials as environment variables, follow these steps:
+  If you're using Bash and prefer to set Yeedu credentials as environment variables, follow these steps:
 
     1. **Open your shell configuration file**: The default file for Bash is .bashrc. You can edit this file using a text editor of your choice.
-    2. **Add environment variables**: Paste the following lines into your .bashrc file, replacing  with your actual Yeedu credentials:
+    2. **Add environment variables**: Paste the following lines into your .bashrc file, replacing <placeholders> with your actual Yeedu credentials:
+
     ```bash
     export YEEDU_SCHEDULER_USER=example@test.com
     export YEEDU_SCHEDULER_PASSWORD=password
+    export YEEDU_SSL_VERIFICATION=True
+    export YEEDU_SSL_CERT_FILE=/path/to/cert/yeedu.crt
     ```
+
+    - `YEEDU_SCHEDULER_USER`: Your Yeedu scheduler username.
+    - `YEEDU_SCHEDULER_PASSWORD`: Your Yeedu scheduler password.
+    - `YEEDU_SSL_VERIFICATION`: Controls SSL certificate verification for HTTPS connections. Set to `True` to enable SSL verification, or `False` to disable it.
+    - `YEEDU_SSL_CERT_FILE`: Path to the SSL certificate file for Yeedu connections.
+
+
     3. **Save and source the file**:
-    - Save your changes to the .bashrc file.
-    - Source the file to apply the changes to your current shell session:
-    ```source ~/.bashrc ```
+      - Save your changes to the .bashrc file.
+      - Source the file to apply the changes to your current shell session:
+
+    ```bash
+    source ~/.bashrc
+    ```
+
 
 ### DAG: Yeedu Job Execution
 

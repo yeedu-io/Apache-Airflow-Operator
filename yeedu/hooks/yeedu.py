@@ -74,6 +74,40 @@ class YeeduHook(BaseHook):
         self.workspace_id = workspace_id
         self.base_url: str = base_url
 
+    def check_ssl(self):
+        try:
+            # if not provided set to true by default
+
+            YEEDU_SSL_VERIFICATION = os.getenv(
+                'YEEDU_SSL_VERIFICATION', 'true').lower()
+            if YEEDU_SSL_VERIFICATION == 'true':
+
+                # check for the ssl cert dir
+                if not os.getenv('YEEDU_SSL_CERT_FILE'):
+                    self.log.error(
+                        f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_SSL_VERIFICATION is set to: {YEEDU_SSL_VERIFICATION} (default: true)")
+                    raise AirflowException(f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_SSL_VERIFICATION is set to: {YEEDU_SSL_VERIFICATION} (default: true)")
+                else:
+                    # check if the file exists or not
+                    if os.path.isfile(os.getenv('YEEDU_SSL_CERT_FILE')):
+                        return os.getenv('YEEDU_SSL_CERT_FILE')
+                    else:
+                        self.log.error(
+                            f"Provided YEEDU_SSL_CERT_FILE: {os.getenv('YEEDU_SSL_CERT_FILE')} doesnot exists")
+                        raise AirflowException(f"Provided YEEDU_SSL_CERT_FILE: {os.getenv('YEEDU_SSL_CERT_FILE')} doesnot exists")
+            elif YEEDU_SSL_VERIFICATION == 'false':
+                return False
+
+            else:
+                self.log.error(
+                    f"Provided YEEDU_SSL_VERIFICATION: {os.getenv('YEEDU_SSL_VERIFICATION')} is neither true/false")
+                raise AirflowException(f"Provided YEEDU_SSL_VERIFICATION: {os.getenv('YEEDU_SSL_VERIFICATION')} is neither true/false")
+
+        except Exception as e:
+            self.log.error(f"Check SSL failed due to: {e}")
+            raise AirflowException(e)
+        
+
     def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None) -> requests.Response:
         """
         Makes an HTTP request to the Yeedu API with retries.
@@ -86,11 +120,10 @@ class YeeduHook(BaseHook):
         """
 
         if method =='POST':
-            response = session.post(url, headers=headers, json=data, params=params)
+            response = session.post(url, headers=headers, json=data, params=params, verify=self.check_ssl())
         else:
-            response = session.get(url, headers=headers, json=data, params=params)
-        #response = requests.request(method, url, headers=headers, json=data, params=params)
-        return response  # Exit loop on successful response
+            response = session.get(url, headers=headers, json=data, params=params, verify=self.check_ssl())
+        return response 
             
 
     def yeedu_login(self):
