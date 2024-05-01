@@ -116,7 +116,7 @@ Before using the YeeduOperator, ensure you have the following:
 
     To execute this DAG:
 
-    1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions, and `YEEDU_SCHEDULER_USER`, `YEEDU_SCHEDULER_PASSWORD` are added as Environment Variables.
+    1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions, and `YEEDU_SCHEDULER_USER`, `YEEDU_SCHEDULER_PASSWORD` ,`YEEDU_SSL_VERIFICATION`, `YEEDU_SSL_CERT_FILE` are added as Environment Variables.
     2. Place the DAG file in the appropriate Airflow DAGs folder.
     3. Trigger the DAG manually or based on the defined schedule interval.
     4. Monitor the Airflow UI for task execution and logs.
