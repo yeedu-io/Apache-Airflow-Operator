@@ -11,8 +11,8 @@ def read(*parts):
 
 setup(
     name='airflow-yeedu-operator',
-    version='1.0.9',
-    description='Submission and monitoring of jobs using the Yeedu API in Apache Airflow. ',
+    version='1.0.10',
+    description='Submission and monitoring of jobs and notebooks using the Yeedu API in Apache Airflow. ',
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
     author='Yeedu',
