@@ -37,8 +37,24 @@ from requests.exceptions import RequestException
 
 session = requests.Session()
 
-YEEDU_SCHEDULER_USER = os.getenv("YEEDU_SCHEDULER_USER")
-YEEDU_SCHEDULER_PASSWORD = os.getenv("YEEDU_SCHEDULER_PASSWORD")
+try:
+    YEEDU_SCHEDULER_USER = os.getenv("YEEDU_SCHEDULER_USER")
+    if not YEEDU_SCHEDULER_USER:
+        raise AirflowException("Missing YEEDU_SCHEDULER_USER variable. "
+                               "Please set it as an environment variable.")
+
+    YEEDU_SCHEDULER_PASSWORD = os.getenv("YEEDU_SCHEDULER_PASSWORD")
+    if not YEEDU_SCHEDULER_PASSWORD:
+        raise AirflowException("Missing YEEDU_SCHEDULER_PASSWORD variable. "
+                               "Please set it as an environment variable.")
+
+    YEEDU_AIRFLOW_VERIFY_SSL = os.getenv("YEEDU_AIRFLOW_VERIFY_SSL",'true').lower()
+    if YEEDU_AIRFLOW_VERIFY_SSL not in ("true", "false"):
+        raise ValueError("YEEDU_AIRFLOW_VERIFY_SSL must be 'true' or 'false'")
+
+    YEEDU_SSL_CERT_FILE = os.getenv("YEEDU_SSL_CERT_FILE")
+except (OSError, ValueError) as e:
+    raise AirflowException(f"Error retrieving Yeedu scheduler configuration: {e}")
 
 headers: dict = {
             'accept': 'application/json',
@@ -77,31 +93,29 @@ class YeeduHook(BaseHook):
     def check_ssl(self):
         try:
             # if not provided set to true by default
-
-            YEEDU_SSL_VERIFICATION = os.getenv(
-                'YEEDU_SSL_VERIFICATION', 'true').lower()
-            if YEEDU_SSL_VERIFICATION == 'true':
+            if YEEDU_AIRFLOW_VERIFY_SSL == 'true':
 
                 # check for the ssl cert dir
-                if not os.getenv('YEEDU_SSL_CERT_FILE'):
+                if not YEEDU_SSL_CERT_FILE:
                     self.log.error(
-                        f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_SSL_VERIFICATION is set to: {YEEDU_SSL_VERIFICATION} (default: true)")
-                    raise AirflowException(f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_SSL_VERIFICATION is set to: {YEEDU_SSL_VERIFICATION} (default: true)")
+                        f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
+                    raise AirflowException(f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
                 else:
                     # check if the file exists or not
-                    if os.path.isfile(os.getenv('YEEDU_SSL_CERT_FILE')):
-                        return os.getenv('YEEDU_SSL_CERT_FILE')
+                    if os.path.isfile(YEEDU_SSL_CERT_FILE):
+                        return YEEDU_SSL_CERT_FILE
                     else:
                         self.log.error(
-                            f"Provided YEEDU_SSL_CERT_FILE: {os.getenv('YEEDU_SSL_CERT_FILE')} doesnot exists")
-                        raise AirflowException(f"Provided YEEDU_SSL_CERT_FILE: {os.getenv('YEEDU_SSL_CERT_FILE')} doesnot exists")
-            elif YEEDU_SSL_VERIFICATION == 'false':
+                            f"Provided YEEDU_SSL_CERT_FILE: {YEEDU_SSL_CERT_FILE} doesnot exists")
+                        raise AirflowException(f"Provided YEEDU_SSL_CERT_FILE: {YEEDU_SSL_CERT_FILE} doesnot exists")
+            elif YEEDU_AIRFLOW_VERIFY_SSL == 'false':
+                self.log.info("YEEDU_AIRFLOW_VERIFY_SSL False")
                 return False
 
             else:
                 self.log.error(
-                    f"Provided YEEDU_SSL_VERIFICATION: {os.getenv('YEEDU_SSL_VERIFICATION')} is neither true/false")
-                raise AirflowException(f"Provided YEEDU_SSL_VERIFICATION: {os.getenv('YEEDU_SSL_VERIFICATION')} is neither true/false")
+                    f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
+                raise AirflowException(f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
 
         except Exception as e:
             self.log.error(f"Check SSL failed due to: {e}")

@@ -34,13 +34,13 @@ Before using the YeeduOperator, ensure you have the following:
     ```bash
     export YEEDU_SCHEDULER_USER=example@test.com
     export YEEDU_SCHEDULER_PASSWORD=password
-    export YEEDU_SSL_VERIFICATION=True
+    export YEEDU_SSL_VERIFICATION=true
     export YEEDU_SSL_CERT_FILE=/path/to/cert/yeedu.crt
     ```
 
     - `YEEDU_SCHEDULER_USER`: Your Yeedu scheduler username.
     - `YEEDU_SCHEDULER_PASSWORD`: Your Yeedu scheduler password.
-    - `YEEDU_SSL_VERIFICATION`: Controls SSL certificate verification for HTTPS connections. Set to `True` to enable SSL verification, or `False` to disable it.
+    - `YEEDU_AIRFLOW_VERIFY_SSL`: Controls SSL certificate verification for HTTPS connections. Set to `true` to enable SSL verification, or `false` to disable it.
     - `YEEDU_SSL_CERT_FILE`: Path to the SSL certificate file for Yeedu connections.
 
 
@@ -116,7 +116,7 @@ Before using the YeeduOperator, ensure you have the following:
 
     To execute this DAG:
 
-    1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions, and `YEEDU_SCHEDULER_USER`, `YEEDU_SCHEDULER_PASSWORD` ,`YEEDU_SSL_VERIFICATION`, `YEEDU_SSL_CERT_FILE` are added as Environment Variables.
+    1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions, and `YEEDU_SCHEDULER_USER`, `YEEDU_SCHEDULER_PASSWORD` ,`YEEDU_AIRFLOW_VERIFY_SSL`, `YEEDU_SSL_CERT_FILE` are added as Environment Variables.
     2. Place the DAG file in the appropriate Airflow DAGs folder.
     3. Trigger the DAG manually or based on the defined schedule interval.
     4. Monitor the Airflow UI for task execution and logs.

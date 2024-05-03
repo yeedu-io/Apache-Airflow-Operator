@@ -22,6 +22,8 @@ from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 from yeedu.hooks.yeedu import YeeduHook
 from yeedu.hooks.yeedu import headers
+from yeedu.hooks.yeedu import YEEDU_AIRFLOW_VERIFY_SSL
+from yeedu.hooks.yeedu import YEEDU_SSL_CERT_FILE
 from airflow.exceptions import AirflowException
 from airflow.models import Variable  # Import Variable from airflow.models
 import requests
@@ -32,6 +34,9 @@ import _thread
 import uuid
 import logging
 import copy
+import ssl
+import threading
+
 
 # Configure the logging system
 logging.basicConfig(level=logging.INFO)  # Set the logging level to INFO
@@ -177,16 +182,11 @@ class YeeduJobRunOperator():
 
             logger.info("Final Job Status: %s", job_status)
 
-            if job_status in ['DONE']:
-                log_type: str = 'stdout'
-            elif job_status in ['ERROR', 'TERMINATED', 'KILLED','STOPPED']:
-                log_type: str = 'stdout'
-            else:
-                logger.error("Job completion status is unknown.")
-                return
 
-            job_log: str = self.hook.get_job_logs(job_id, log_type)
-            logger.info("Logs for Job ID %s (Log Type: %s): %s", job_id, log_type, job_log)
+            job_log_stdout: str = self.hook.get_job_logs(job_id, 'stdout')
+            job_log_stderr: str = self.hook.get_job_logs(job_id, 'stderr')
+            job_log: str = " stdout "+job_log_stdout+" stderr "+job_log_stderr
+            logger.info("Logs for Job ID %s (%s)", job_id, job_log)
 
             if job_status in ['ERROR', 'TERMINATED', 'KILLED','STOPPED']:
                 logger.error(job_log)
@@ -256,7 +256,7 @@ class YeeduNotebookRunOperator():
     def get_active_notebook_instances(self):
         try:
             retry_interval = 60
-            max_retries = 10
+            max_retries = 20
             for retry in range(1, max_retries + 1):
 
                 get_params = {
@@ -369,7 +369,7 @@ class YeeduNotebookRunOperator():
 
                 # creating web socket url
                 websocket_url = self.base_url + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/ws/yeedu_session/{token}"
-                websocket_url = websocket_url.replace('http://', 'ws://').replace('https://', 'ws://')
+                websocket_url = websocket_url.replace('http://', 'ws://').replace('https://', 'wss://')
                 #logger.info(f"WebSocket URL: {websocket_url}")
                 return websocket_url
             else:
@@ -630,7 +630,7 @@ class YeeduNotebookRunOperator():
             logger.error(e)
             raise e
 
-    def on_close(self, ws, e=None):
+    def on_close(self, e=None):
         try:
             logger.info(f"WebSocket closed")
 
@@ -688,7 +688,15 @@ class YeeduNotebookRunOperator():
                 on_error=self.on_error,
                 on_close=self.on_close
             )
-            _thread.start_new_thread(ws.run_forever, ())
+            # _thread.start_new_thread(ws.run_forever, ())
+            def run_forever_in_thread():
+                if YEEDU_AIRFLOW_VERIFY_SSL == 'true':
+                    ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED, "ca_certs": YEEDU_SSL_CERT_FILE})
+                else:
+                    ws.run_forever()
+
+            thread = threading.Thread(target=run_forever_in_thread)
+            thread.start()
 
             time.sleep(5)
 
