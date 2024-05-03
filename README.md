@@ -34,7 +34,7 @@ Before using the YeeduOperator, ensure you have the following:
     ```bash
     export YEEDU_SCHEDULER_USER=example@test.com
     export YEEDU_SCHEDULER_PASSWORD=password
-    export YEEDU_SSL_VERIFICATION=true
+    export YEEDU_AIRFLOW_VERIFY_SSL=true
     export YEEDU_SSL_CERT_FILE=/path/to/cert/yeedu.crt
     ```
 
