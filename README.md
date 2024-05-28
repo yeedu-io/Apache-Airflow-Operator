@@ -24,33 +24,35 @@ The `YeeduOperator` acts as a bridge within Airflow, allowing you to effortlessl
 Before using the YeeduOperator, ensure you have the following:
 
 - **Access to the Yeedu API**: You'll need valid credentials to interact with the Yeedu API.
-- **Proper Airflow Configuration**: Make sure Airflow is configured with the necessary connections and variables (if applicable) to connect to Yeedu and Airflow resources.
-- **Setting Up Environment Variables (For Bash)**:
-  If you're using Bash and prefer to set Yeedu credentials as environment variables, follow these steps:
+- **Creating Airflw Connection (For Yeedu Credentials)**:
 
-    1. **Open your shell configuration file**: The default file for Bash is .bashrc. You can edit this file using a text editor of your choice.
-    2. **Add environment variables**: Paste the following lines into your .bashrc file, replacing <placeholders> with your actual Yeedu credentials:
-
-    ```bash
-    export YEEDU_SCHEDULER_USER=example@test.com
-    export YEEDU_SCHEDULER_PASSWORD=password
-    export YEEDU_AIRFLOW_VERIFY_SSL=true
-    export YEEDU_SSL_CERT_FILE=/path/to/cert/yeedu.crt
-    ```
-
-    - `YEEDU_SCHEDULER_USER`: Your Yeedu scheduler username.
-    - `YEEDU_SCHEDULER_PASSWORD`: Your Yeedu scheduler password.
-    - `YEEDU_AIRFLOW_VERIFY_SSL`: Controls SSL certificate verification for HTTPS connections. Set to `true` to enable SSL verification, or `false` to disable it.
-    - `YEEDU_SSL_CERT_FILE`: Path to the SSL certificate file for Yeedu connections.
+<img src="images/yeedu_connection.png" alt="Airflow Connection" width="800" height="600" />
 
 
-    3. **Save and source the file**:
-      - Save your changes to the .bashrc file.
-      - Source the file to apply the changes to your current shell session:
+ **Steps to Create an Airflow Connection**
 
-    ```bash
-    source ~/.bashrc
-    ```
+1. **Navigate to Connections**:
+   - In the Airflow UI, click on the `Admin` tab at the top of the screen.
+   - From the dropdown menu, select `Connections`.
+
+2. **Create a New Connection**:
+   - On the Connections page, click the `+` (plus) button to add a new connection.
+
+3. **Fill in the Connection Details**:
+   - **Conn Id**: A unique identifier for your connection. Example: `my_yeeduu_connection`.
+   - **Conn Type**: Select the appropriate type for your connection. For a Yeedu Notebook or job, `HTTP` is appropriate.
+   - **Host**: Yeedu hostname.
+   - **Login**: The username for the connection.
+   - **Password**: The password for the connection.
+
+5. **Extra**:
+   - Click on the `Extra` field to expand it. This field allows you to provide additional parameters in JSON format. 
+
+   ```json
+   {
+       "YEEDU_AIRFLOW_VERIFY_SSL": "true",
+       "YEEDU_SSL_CERT_FILE": "/path/to/cert/file"
+   }
 
 
 ### DAG: Yeedu Job Execution
@@ -90,33 +92,18 @@ Before using the YeeduOperator, ensure you have the following:
 
         submit_job_task = YeeduOperator(
             task_id='demo_dag',
-            conf_id='config_id',  # Replace with your job config ID or Notebook Config ID
-            tenant_id='tenant_id',  # Replace with your Yeedu tenant_id
-            base_url='http://hostname:8080/api/v1/',  # Replace with your Yeedu API URL
-            workspace_id='your_workspace_id',  # Replace with your Yeedu workspace ID
+            job_url='https://hostname/tenant/tenant_id/workspace/workspace_id/spark/notebook/notebook_id', # Replace with job or notebook url
+            connection_id='yeedu_connection', # Replace with your connection id
             dag=dag,
         )
 
     ```
-    **Explanation of Variables:**
-
-- `task_id='demo_dag'`: This variable defines the unique identifier for the task within the Airflow DAG. It's recommended to use a descriptive name that reflects the task's purpose. In this case, `demo_dag` suggests it's a demonstration task.
-
-- `conf_id='config_id'`: This variable specifies the ID of the configuration you want to use with the `YeeduOperator`. It could be either a Yeedu job configuration ID or a notebook configuration ID. Replace `'config_id'` with the actual ID from your Yeedu environment.
-
-- `tenant_id='tenant_id'`: This variable defines your Yeedu tenant ID. Each Yeedu account might be associated with multiple tenants, so it's important to specify the correct one for the job or notebook you want to submit. Replace `'tenant_id'` with your actual tenant ID.
-
-- `base_url='http://hostname:8080/api/v1/'`: This variable sets the base URL for the Yeedu API. It specifies the location where the API endpoints can be accessed. Replace `'http://hostname:8080/api/v1/'` with the actual URL for your Yeedu API endpoint.
-
-- `workspace_id='your_workspace_id'`: This variable defines the ID of the Yeedu workspace where the job or notebook resides. Yeedu workspaces organize your jobs and notebooks. Replace `'your_workspace_id'` with the ID of the relevant workspace.
-
-- `dag=dag`: This variable associates the `submit_job_task` with a specific Airflow DAG object (`dag`). This connection allows the task to be integrated into the workflow defined by the DAG.
 
 - #### Execution
 
     To execute this DAG:
 
-    1. Ensure all required configurations (config ID, API URL, tenant ID, workspace ID) are correctly provided in the task definitions, and `YEEDU_SCHEDULER_USER`, `YEEDU_SCHEDULER_PASSWORD` ,`YEEDU_AIRFLOW_VERIFY_SSL`, `YEEDU_SSL_CERT_FILE` are added as Environment Variables.
+    1. Ensure all required configurations (job_url, connection_id) are correctly provided in the task definition.
     2. Place the DAG file in the appropriate Airflow DAGs folder.
     3. Trigger the DAG manually or based on the defined schedule interval.
     4. Monitor the Airflow UI for task execution and logs.

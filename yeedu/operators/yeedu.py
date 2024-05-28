@@ -22,8 +22,6 @@ from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
 from yeedu.hooks.yeedu import YeeduHook
 from yeedu.hooks.yeedu import headers
-from yeedu.hooks.yeedu import YEEDU_AIRFLOW_VERIFY_SSL
-from yeedu.hooks.yeedu import YEEDU_SSL_CERT_FILE
 from airflow.exceptions import AirflowException
 from airflow.models import Variable  # Import Variable from airflow.models
 import requests
@@ -36,6 +34,10 @@ import logging
 import copy
 import ssl
 import threading
+import rel
+import signal
+from urllib.parse import urlparse
+
 
 
 # Configure the logging system
@@ -46,37 +48,52 @@ logger = logging.getLogger(__name__)
 
 
 class YeeduOperator(BaseOperator):
-    """
-    YeeduOperator submits a job to Yeedu based on the provided configuration ID.
 
-    :param conf_id: The configuration ID (mandatory).
-    :type conf_id: str
-    :param tenant_id: Yeedu API tenant ID (optional).
-    :type tenant_id: str
-    :param base_url: Yeedu API base URL (optional).
-    :type base_url: str
-    :param workspace_id: The ID of the Yeedu workspace (optional).
-    :type workspace_id: int
-    :param args: Additional positional arguments.
-    :param kwargs: Additional keyword arguments.
-    """
     @apply_defaults
-    def __init__(self, conf_id, tenant_id, base_url, workspace_id, *args, **kwargs):
+    def __init__(self, job_url, connection_id, *args, **kwargs):
         """
-        Initialize the YeeduOperator.
+        Initializes the class with the given parameters.
 
-        :param conf_id: The ID of the configuration (job or notebook) in Yeedu (mandatory).
-        :param tenant_id: Yeedu API tenant ID (optional).
-        :param base_url: Yeedu API base URL (optional).
-        :param workspace_id: The ID of the Yeedu workspace (optional).
+        Parameters:
+        job_url (str): The URL of the Yeedu Notebook or job.
+        connection_id (str): The Airflow connection ID. This connection should contain:
+            - username (str): The username for the connection.
+            - password (str): The password for the connection.
+            - hostname (str): The hostname for the connection.
+            - extra (dict): Additional parameters in JSON format, including:
+                - YEEDU_AIRFLOW_VERIFY_SSL (str): true or false to verify SSL.
+                - YEEDU_SSL_CERT_FILE (str): Path to the SSL certificate file.
+
+        *args: Additional positional arguments.
+        **kwargs: Additional keyword arguments.
         """
         super().__init__(*args, **kwargs,)
-        self.conf_id = conf_id
-        self.tenant_id = tenant_id
-        self.base_url = base_url
-        self.workspace_id = workspace_id
-        self.hook: YeeduHook = YeeduHook(conf_id=self.conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id)
+        self.url = job_url
+        self.connection_id=connection_id
+        self.base_url, self.tenant_id, self.workspace_id, self.job_type, self.conf_id = self.extract_ids(self.url)
 
+        self.hook: YeeduHook = YeeduHook(conf_id=self.conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id)
+
+    def extract_ids(self, url):
+        parsed_url = urlparse(url)
+        path_segments = parsed_url.path.split('/')
+        tenant_id = path_segments[2] if len(path_segments) > 2 else None
+        workspace_id = path_segments[4] if len(path_segments) > 4 else None
+
+        if 'notebook' in path_segments:
+            conf_id = path_segments[path_segments.index('notebook') + 1] if len(path_segments) > path_segments.index('notebook') + 1 else None
+            job_type = 'notebook'
+        elif 'conf' in path_segments:
+            conf_id = path_segments[path_segments.index('conf') + 1] if len(path_segments) > path_segments.index('conf') + 1 else None
+            job_type = 'conf'
+        else:
+            conf_id = None
+            job_type = None
+            
+        # Extract base URL and append :8080
+        base_url = f"{parsed_url.scheme}://{parsed_url.hostname}:8080/api/v1/"
+
+        return base_url, tenant_id, int(workspace_id), job_type, int(conf_id)
     
     def execute(self, context):
         """
@@ -88,14 +105,13 @@ class YeeduOperator(BaseOperator):
         :param context: The execution context.
         :type context: dict
         """
-        self.hook.yeedu_login()
-        job_type = self.hook.get_job_type()
-        if job_type == 'job':
+        self.hook.yeedu_login(context)
+        if self.job_type == 'conf':
             self._execute_job_operator(context)
-        elif job_type == 'notebook':
+        elif self.job_type == 'notebook':
             self._execute_notebook_operator(context)
         else:
-            raise ValueError(f"Invalid operator type: {job_type}")
+            raise ValueError(f"Invalid operator type: {self.job_type}")
 
     def _execute_job_operator(self, context):
         # Create and execute YeeduJobRunOperator
@@ -103,7 +119,8 @@ class YeeduOperator(BaseOperator):
             job_conf_id=self.conf_id,
             tenant_id=self.tenant_id,
             base_url=self.base_url,
-            workspace_id=self.workspace_id
+            workspace_id=self.workspace_id,
+            connection_id=self.connection_id,
         )
         job_operator.execute(context)
 
@@ -113,7 +130,8 @@ class YeeduOperator(BaseOperator):
             base_url=self.base_url,
             workspace_id=self.workspace_id,
             notebook_conf_id=self.conf_id,
-            tenant_id=self.tenant_id
+            tenant_id=self.tenant_id,
+            connection_id=self.connection_id,
         )
         notebook_operator.execute(context)
 
@@ -143,6 +161,7 @@ class YeeduJobRunOperator():
         base_url: str,
         workspace_id: int,
         tenant_id: str,
+        connection_id: str,
         *args,
         **kwargs,
     ) -> None:
@@ -159,7 +178,8 @@ class YeeduJobRunOperator():
         self.tenant_id: str = tenant_id
         self.base_url: str = base_url
         self.workspace_id: int = workspace_id
-        self.hook: YeeduHook = YeeduHook(conf_id = self.job_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id)
+        self.connection_id=connection_id
+        self.hook: YeeduHook = YeeduHook(conf_id = self.job_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id)
         self.job_id: Optional[Union[int, None]] = None
 
     def execute(self, context: dict) -> None:
@@ -178,6 +198,8 @@ class YeeduJobRunOperator():
             job_id = self.hook.submit_job(self.job_conf_id)
 
             logger.info("Job Submited (Job Id: %s)", job_id)
+            job_run_url = f'{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{job_id}/run-metrics?type=spark_job'.replace(':8080/api/v1','')
+            logger.info("Check Yeedu Job run status and logs here " + job_run_url)
             job_status: str = self.hook.wait_for_completion(job_id)
 
             logger.info("Final Job Status: %s", job_status)
@@ -209,19 +231,21 @@ class YeeduNotebookRunOperator():
     error_value = None
 
     @apply_defaults
-    def __init__(self, base_url, workspace_id, notebook_conf_id, tenant_id, *args, **kwargs):
+    def __init__(self, base_url, workspace_id, notebook_conf_id, tenant_id, connection_id, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.base_url = base_url
         #self.headers = {'Accept': 'application/json'}
         self.workspace_id = workspace_id
         self.notebook_conf_id = notebook_conf_id
         self.tenant_id = tenant_id
+        self.connection_id = connection_id
         self.notebook_cells = {}
         self.notebook_executed = True
         self.notebook_id = None
         self.cell_output_data = []
         self.cells_info = {}
-        self.hook: YeeduHook = YeeduHook(conf_id = self.notebook_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id)
+        self.ws = None
+        self.hook: YeeduHook = YeeduHook(conf_id = self.notebook_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id)
 
         # default (30, 60) -- connect time: 30, read time: 60 seconds
         # https://requests.readthedocs.io/en/latest/user/advanced/#timeouts
@@ -242,6 +266,8 @@ class YeeduNotebookRunOperator():
 
             if status_code == 200:
                 self.notebook_id = post_response.json().get('notebook_id')
+                notebook_run_url = f'{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{self.notebook_id}/run-metrics?type=notebook'.replace(':8080/api/v1','')
+                logger.info("Check Yeedu notebook run status and logs here " + notebook_run_url)
                 self.get_active_notebook_instances()
                 self.wait_for_kernel_status(self.notebook_id)
                 self.get_websocket_token()
@@ -306,7 +332,7 @@ class YeeduNotebookRunOperator():
         try:
             kernel_url = self.base_url + f'workspace/{self.workspace_id}/notebook/{notebook_id}/kernel/startOrGetStatus'
 
-            logger.info(f"Kernel URL: {kernel_url}")
+            # logger.info(f"Kernel URL: {kernel_url}")
 
             max_retries = 3
             logger.info("Notebook is starting. Please wait....")
@@ -621,21 +647,18 @@ class YeeduNotebookRunOperator():
 
     def on_error(self, ws, error):
         try:
-            logger.error(f"WebSocket encountered an error: {error}")
-
-            if self.check_notebook_instance_status() != 'STOPPED':
-                self.exit_notebook(f'Websocket encountered error: {error}')
-
+            logger.info(f"WebSocket encountered an error: {error}")
+ 
         except Exception as e:
             logger.error(e)
             raise e
 
-    def on_close(self, e=None):
+    def on_close(self,ws, close_status_code, close_msg):
         try:
-            logger.info(f"WebSocket closed")
+            logger.info(f"WebSocket closed {close_status_code} {close_msg}")
 
-            if self.check_notebook_instance_status()!= 'STOPPED':
-                self.exit_notebook(f"Websocket closed : {e}")
+            # if self.check_notebook_instance_status()!= 'STOPPED':
+            #     self.exit_notebook(f"Websocket closed : {e}")
 
         except Exception as e:
             logger.error(e)
@@ -675,28 +698,42 @@ class YeeduNotebookRunOperator():
         except Exception as e:
             logger.error(f"Error while sending execute request: {e}")
             raise e
+        
+    def connect_websocket(self):
+        ws = websocket.WebSocketApp(
+            self.get_websocket_token(),
+            on_open=self.on_open,
+            on_message=self.on_message,
+            on_error=self.on_error,
+            on_close=self.on_close
+        )
+        def run_forever_in_thread():
+                if self.hook.YEEDU_AIRFLOW_VERIFY_SSL == 'true':
+                    ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED, "ca_certs": self.hook.YEEDU_SSL_CERT_FILE}, reconnect=5)
+                elif self.hook.YEEDU_AIRFLOW_VERIFY_SSL == 'false':
+                    ws.run_forever(sslopt={"cert_reqs": ssl.CERT_NONE}, reconnect=5)
+
+
+        thread = threading.Thread(target=run_forever_in_thread)
+        thread.start()
+        return ws
+    
+    # Define the signal handler function
+    def signal_handler(sig, frame):
+        print("Signal received, aborting...")
+        rel.abort()  # Stop the event loop and gracefully shut down the WebSocket connection
 
     def execute(self, context: dict):
         # Send execute requests for notebook cells
         try:
             #self.yeedu_login()
             self.create_notebook_instance()
-            ws = websocket.WebSocketApp(
-                self.get_websocket_token(),
-                on_open=self.on_open,
-                on_message=self.on_message,
-                on_error=self.on_error,
-                on_close=self.on_close
-            )
-            # _thread.start_new_thread(ws.run_forever, ())
-            def run_forever_in_thread():
-                if YEEDU_AIRFLOW_VERIFY_SSL == 'true':
-                    ws.run_forever(sslopt={"cert_reqs": ssl.CERT_REQUIRED, "ca_certs": YEEDU_SSL_CERT_FILE})
-                else:
-                    ws.run_forever()
 
-            thread = threading.Thread(target=run_forever_in_thread)
-            thread.start()
+            signal.signal(signal.SIGINT, self.signal_handler)
+
+            self.ws = self.connect_websocket()
+
+            rel.dispatch()
 
             time.sleep(5)
 
@@ -715,7 +752,7 @@ class YeeduNotebookRunOperator():
                 code = cell.get('code')
                 msg_id = cell.get('cell_uuid')
 
-                self.send_execute_request(ws, code, session_id, msg_id)
+                self.send_execute_request(self.ws, code, session_id, msg_id)
 
                 cell['msg_id'] = msg_id
 
@@ -734,9 +771,9 @@ class YeeduNotebookRunOperator():
 
                 if self.check_notebook_instance_status() != 'STOPPED':
                     self.exit_notebook(
-                        f'Exiting notebook from main function: {e}')
+                        f'Exiting notebook from main function')
 
-            ws.close()
+            self.ws.close()
 
             if self.content_status == 'error': 
                 raise AirflowException(f"{self.error_value}")
@@ -745,3 +782,9 @@ class YeeduNotebookRunOperator():
             logger.error(
                 f"Notebook execution failed with error:  {e}")
             raise e
+        
+        finally:
+            self.notebook_executed = False
+            if self.check_notebook_instance_status() != 'STOPPED':
+                self.exit_notebook(
+                        f'Exiting notebook')

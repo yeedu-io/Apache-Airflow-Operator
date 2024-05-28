@@ -37,25 +37,6 @@ from requests.exceptions import RequestException
 
 session = requests.Session()
 
-try:
-    YEEDU_SCHEDULER_USER = os.getenv("YEEDU_SCHEDULER_USER")
-    if not YEEDU_SCHEDULER_USER:
-        raise AirflowException("Missing YEEDU_SCHEDULER_USER variable. "
-                               "Please set it as an environment variable.")
-
-    YEEDU_SCHEDULER_PASSWORD = os.getenv("YEEDU_SCHEDULER_PASSWORD")
-    if not YEEDU_SCHEDULER_PASSWORD:
-        raise AirflowException("Missing YEEDU_SCHEDULER_PASSWORD variable. "
-                               "Please set it as an environment variable.")
-
-    YEEDU_AIRFLOW_VERIFY_SSL = os.getenv("YEEDU_AIRFLOW_VERIFY_SSL",'true').lower()
-    if YEEDU_AIRFLOW_VERIFY_SSL not in ("true", "false"):
-        raise ValueError("YEEDU_AIRFLOW_VERIFY_SSL must be 'true' or 'false'")
-
-    YEEDU_SSL_CERT_FILE = os.getenv("YEEDU_SSL_CERT_FILE")
-except (OSError, ValueError) as e:
-    raise AirflowException(f"Error retrieving Yeedu scheduler configuration: {e}")
-
 headers: dict = {
             'accept': 'application/json',
             'Content-Type': 'application/json'
@@ -75,7 +56,7 @@ class YeeduHook(BaseHook):
     :param kwargs: Additional keyword arguments.
     """
 
-    def __init__(self, conf_id: int, tenant_id: str, base_url: str, workspace_id: int, *args, **kwargs) -> None:
+    def __init__(self, conf_id: int, tenant_id: str, base_url: str, workspace_id: int, connection_id: str, *args, **kwargs) -> None:
         """
         Initializes YeeduHook with the necessary configurations to communicate with the Yeedu API.
 
@@ -88,39 +69,54 @@ class YeeduHook(BaseHook):
         self.tenant_id: str = tenant_id
         self.conf_id = conf_id
         self.workspace_id = workspace_id
+        self.connection_id = connection_id
+        self.connection = self.get_connection(self.connection_id)
         self.base_url: str = base_url
+        self.YEEDU_SSL_CERT_FILE = self.connection.extra_dejson.get('YEEDU_SSL_CERT_FILE')
+        self.YEEDU_AIRFLOW_VERIFY_SSL = self.connection.extra_dejson.get('YEEDU_AIRFLOW_VERIFY_SSL', 'true')
+        self.username, self.password = self.get_username_password()
+        session.verify = self.check_ssl()
+
 
     def check_ssl(self):
         try:
             # if not provided set to true by default
-            if YEEDU_AIRFLOW_VERIFY_SSL == 'true':
+            if self.YEEDU_AIRFLOW_VERIFY_SSL == 'true':
 
                 # check for the ssl cert dir
-                if not YEEDU_SSL_CERT_FILE:
+                if not self.YEEDU_SSL_CERT_FILE:
                     self.log.error(
-                        f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
-                    raise AirflowException(f"Please set the environment variable: YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
+                        f"Please provide YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {self.YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
+                    raise AirflowException(f"Please provide YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {self.YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
                 else:
                     # check if the file exists or not
-                    if os.path.isfile(YEEDU_SSL_CERT_FILE):
-                        return YEEDU_SSL_CERT_FILE
+                    if os.path.isfile(self.YEEDU_SSL_CERT_FILE):
+                        return self.YEEDU_SSL_CERT_FILE
                     else:
                         self.log.error(
-                            f"Provided YEEDU_SSL_CERT_FILE: {YEEDU_SSL_CERT_FILE} doesnot exists")
-                        raise AirflowException(f"Provided YEEDU_SSL_CERT_FILE: {YEEDU_SSL_CERT_FILE} doesnot exists")
-            elif YEEDU_AIRFLOW_VERIFY_SSL == 'false':
+                            f"Provided self.YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} doesnot exists")
+                        raise AirflowException(f"Provided self.YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} doesnot exists")
+            elif self.YEEDU_AIRFLOW_VERIFY_SSL == 'false':
                 self.log.info("YEEDU_AIRFLOW_VERIFY_SSL False")
                 return False
 
             else:
                 self.log.error(
-                    f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
-                raise AirflowException(f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
+                    f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {self.YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
+                raise AirflowException(f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {self.YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
 
         except Exception as e:
             self.log.error(f"Check SSL failed due to: {e}")
             raise AirflowException(e)
-        
+
+    
+    def get_username_password(self):
+        username = self.connection.login
+        password = self.connection.password
+        if not username or not password:
+            raise AirflowException(f"Username or password is not set in the connection '{self.connection_id}'")
+        return username, password
+    
 
     def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None) -> requests.Response:
         """
@@ -131,23 +127,26 @@ class YeeduHook(BaseHook):
         :param data: The JSON data for the request.
         :param params: Optional dictionary of query parameters.
         :return: The API response.
+        :raises AirflowException: If continuous request failures reach the threshold.
         """
-
         if method =='POST':
-            response = session.post(url, headers=headers, json=data, params=params, verify=self.check_ssl())
+            response = session.post(url, headers=headers, json=data, params=params )
         else:
-            response = session.get(url, headers=headers, json=data, params=params, verify=self.check_ssl())
-        return response 
+            response = session.get(url, headers=headers, json=data, params=params) 
+        #response = requests.request(method, url, headers=headers, json=data, params=params)
+        return response  # Exit loop on successful response
+
+
             
 
-    def yeedu_login(self):
+    def yeedu_login(self,context):
         try:
             login_url = self.base_url+'login'
             data = {
-                    "username": f"{YEEDU_SCHEDULER_USER}",
-                    "password": f"{YEEDU_SCHEDULER_PASSWORD}"
+                    "username": f"{self.username}",
+                    "password": f"{self.password}"
                 }
-            # self.log.info(f"{data},{YEEDU_SCHEDULER_USER},{YEEDU_SCHEDULER_PASSWORD}")
+            
             login_response = self._api_request('POST',login_url,data)
 
             if login_response.status_code == 200:
@@ -182,23 +181,7 @@ class YeeduHook(BaseHook):
             self.log.info(f"An error occurred during associate_tenant: {e}")
             raise AirflowException(e)  
         
-    def get_job_type(self):
 
-        # URL for notebook configuration API
-        notebook_url = self.base_url + f'workspace/{self.workspace_id}/notebook/conf?notebook_conf_id={self.conf_id}'
-        response_notebook = self._api_request('GET',notebook_url)
-        # self.log.info("notebookresponse",response_notebook.json())
-        # URL for job configuration API
-        job_url = self.base_url + f'workspace/{self.workspace_id}/spark/job/conf?job_conf_id={self.conf_id}'
-        response_job = self._api_request('GET',job_url)
-        # self.log.info(response_job.json())
-        # Check status codes and return job type
-        if response_notebook.status_code == 200:
-            return 'notebook'
-        elif response_job.status_code == 200:
-            return 'job'
-        else:
-            return None
         
     def submit_job(self, job_conf_id: str) -> int:
         """
@@ -238,7 +221,7 @@ class YeeduHook(BaseHook):
 
         job_status_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/{job_id}'
         return self._api_request('GET', job_status_url)
-
+                        
             
 
     def get_job_logs(self, job_id: int, log_type: str) -> str:
@@ -258,6 +241,7 @@ class YeeduHook(BaseHook):
         except Exception as e:
             raise AirflowException(e)
             
+        
 
     def wait_for_completion(self, job_id: int) -> str:
         """
@@ -301,4 +285,5 @@ class YeeduHook(BaseHook):
         
         except Exception as e:
             raise AirflowException(e)
+        
         
