@@ -242,6 +242,16 @@ class YeeduHook(BaseHook):
             raise AirflowException(e)
             
         
+    def kill_job(self, job_id: int):
+        try:
+            job_kill_url = self.base_url + f'workspace/{self.workspace_id}/spark/job/kill/{job_id}'
+            self.log.info(f"Stopping job of Job Id {job_id}")
+            response = self._api_request('POST',job_kill_url)
+            if response.status_code == 201:
+                self.log.info("Stopped the Job")
+        except Exception as e:
+            raise AirflowException(e)
+
 
     def wait_for_completion(self, job_id: int) -> str:
         """
