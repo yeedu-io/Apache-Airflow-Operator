@@ -56,7 +56,7 @@ class YeeduHook(BaseHook):
     :param kwargs: Additional keyword arguments.
     """
 
-    def __init__(self, conf_id: int, tenant_id: str, base_url: str, workspace_id: int, connection_id: str, *args, **kwargs) -> None:
+    def __init__(self, conf_id: int, tenant_id: str, base_url: str, workspace_id: int, connection_id: str, cluster_id: int,  *args, **kwargs) -> None:
         """
         Initializes YeeduHook with the necessary configurations to communicate with the Yeedu API.
 
@@ -70,6 +70,7 @@ class YeeduHook(BaseHook):
         self.conf_id = conf_id
         self.workspace_id = workspace_id
         self.connection_id = connection_id
+        self.cluster_id = cluster_id
         self.connection = self.get_connection(self.connection_id)
         self.base_url: str = base_url
         self.YEEDU_SSL_CERT_FILE = self.connection.extra_dejson.get('YEEDU_SSL_CERT_FILE')
@@ -131,8 +132,11 @@ class YeeduHook(BaseHook):
         """
         if method =='POST':
             response = session.post(url, headers=headers, json=data, params=params )
-        else:
+        elif method =='GET':
             response = session.get(url, headers=headers, json=data, params=params) 
+        else:
+            response = session.put(url, headers=headers, json=data, params=params) 
+
         #response = requests.request(method, url, headers=headers, json=data, params=params)
         return response  # Exit loop on successful response
 
@@ -160,6 +164,40 @@ class YeeduHook(BaseHook):
         except Exception as e:
             self.log.info(f"An error occurred during yeedu_login: {e}")
             raise AirflowException(e)
+        
+    def update_job_configuration(self,job_conf_id,cluster_id):
+        try:
+            job_update_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/conf'
+            data = {
+                'cluster_id': cluster_id
+            }
+            params = {
+                'job_conf_id': job_conf_id
+            }
+            response = session.put(job_update_url, headers=headers, params=params, json=data)
+            self.log.info(f"update Job conf response {response.json()}")
+
+        except Exception as e:
+            self.log.info(f"An error occurred during update_job_configuration: {e}")
+            raise AirflowException(e)  
+        
+    def update_notebook_configuration(self,job_conf_id,cluster_id):
+        try:
+            notebook_update_url: str = self.base_url + f'workspace/{self.workspace_id}/notebook/conf'
+            data = {
+                'cluster_id': cluster_id
+            }
+            params = {
+                'notebook_conf_id': job_conf_id
+            }
+
+            self.log.info(f"{data}, {params}")
+            response = session.put(notebook_update_url, headers=headers, params=params, json=data)
+            self.log.info(f"update notebook response {response.json()}")
+        except Exception as e:
+            self.log.info(f"An error occurred during update_notebook_configuration: {e}")
+            raise AirflowException(e)  
+
 
     def associate_tenant(self):
         try:

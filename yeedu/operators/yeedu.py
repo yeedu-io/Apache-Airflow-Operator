@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 class YeeduOperator(BaseOperator):
 
     @apply_defaults
-    def __init__(self, job_url, connection_id, *args, **kwargs):
+    def __init__(self, job_url, connection_id, cluster_id=None, *args, **kwargs):
         """
         Initializes the class with the given parameters.
 
@@ -70,9 +70,11 @@ class YeeduOperator(BaseOperator):
         super().__init__(*args, **kwargs,)
         self.url = job_url
         self.connection_id=connection_id
+        self.cluster_id=cluster_id
+
         self.base_url, self.tenant_id, self.workspace_id, self.job_type, self.conf_id = self.extract_ids(self.url)
 
-        self.hook: YeeduHook = YeeduHook(conf_id=self.conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id)
+        self.hook: YeeduHook = YeeduHook(conf_id=self.conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id, cluster_id=self.cluster_id)
 
     def extract_ids(self, url):
         parsed_url = urlparse(url)
@@ -107,8 +109,17 @@ class YeeduOperator(BaseOperator):
         """
         self.hook.yeedu_login(context)
         if self.job_type == 'conf':
+
+            if self.cluster_id is not None:
+
+                self.hook.update_job_configuration(job_conf_id=self.conf_id, cluster_id=self.cluster_id)
             self._execute_job_operator(context)
         elif self.job_type == 'notebook':
+
+            if self.cluster_id is not None:
+                logger.info("cluster_id notebook updating cluster id : %s", self.cluster_id)
+
+                self.hook.update_notebook_configuration(job_conf_id=self.conf_id, cluster_id=self.cluster_id)
             self._execute_notebook_operator(context)
         else:
             raise ValueError(f"Invalid operator type: {self.job_type}")
@@ -121,6 +132,7 @@ class YeeduOperator(BaseOperator):
             base_url=self.base_url,
             workspace_id=self.workspace_id,
             connection_id=self.connection_id,
+            cluster_id=self.cluster_id,
         )
         job_operator.execute(context)
 
@@ -132,6 +144,7 @@ class YeeduOperator(BaseOperator):
             notebook_conf_id=self.conf_id,
             tenant_id=self.tenant_id,
             connection_id=self.connection_id,
+            cluster_id=self.cluster_id,
         )
         notebook_operator.execute(context)
 
@@ -162,6 +175,7 @@ class YeeduJobRunOperator():
         workspace_id: int,
         tenant_id: str,
         connection_id: str,
+        cluster_id: int,
         *args,
         **kwargs,
     ) -> None:
@@ -179,7 +193,8 @@ class YeeduJobRunOperator():
         self.base_url: str = base_url
         self.workspace_id: int = workspace_id
         self.connection_id=connection_id
-        self.hook: YeeduHook = YeeduHook(conf_id = self.job_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id)
+        self.cluster_id=cluster_id
+        self.hook: YeeduHook = YeeduHook(conf_id = self.job_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id, cluster_id=self.cluster_id)
         self.job_id: Optional[Union[int, None]] = None
 
     def execute(self, context: dict) -> None:
@@ -237,7 +252,7 @@ class YeeduNotebookRunOperator():
     error_value = None
 
     @apply_defaults
-    def __init__(self, base_url, workspace_id, notebook_conf_id, tenant_id, connection_id, *args, **kwargs):
+    def __init__(self, base_url, workspace_id, notebook_conf_id, tenant_id, connection_id, cluster_id,*args, **kwargs):
         super().__init__(*args, **kwargs)
         self.base_url = base_url
         #self.headers = {'Accept': 'application/json'}
@@ -245,13 +260,14 @@ class YeeduNotebookRunOperator():
         self.notebook_conf_id = notebook_conf_id
         self.tenant_id = tenant_id
         self.connection_id = connection_id
+        self.cluster_id=cluster_id
         self.notebook_cells = {}
         self.notebook_executed = True
         self.notebook_id = None
         self.cell_output_data = []
         self.cells_info = {}
         self.ws = None
-        self.hook: YeeduHook = YeeduHook(conf_id = self.notebook_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id)
+        self.hook: YeeduHook = YeeduHook(conf_id = self.notebook_conf_id, tenant_id=self.tenant_id, base_url=self.base_url, workspace_id=self.workspace_id, connection_id=self.connection_id, cluster_id=self.cluster_id)
 
         # default (30, 60) -- connect time: 30, read time: 60 seconds
         # https://requests.readthedocs.io/en/latest/user/advanced/#timeouts
@@ -480,11 +496,7 @@ class YeeduNotebookRunOperator():
             logger.error(
                 f"An error occurred while checking notebook instance status: {e}")
 
-        except Exception as e:
-            logger.error(
-                f"An error occurred while checking notebook instance status: {e}")
-            
-
+        
     def stop_notebook(self):
         try:
             stop_notebook_url = self.base_url + f'workspace/{self.workspace_id}/notebook/kill/{self.notebook_id}'
