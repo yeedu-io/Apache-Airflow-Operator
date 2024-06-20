@@ -447,6 +447,7 @@ class YeeduNotebookRunOperator():
 
             # Check if the notebook status is 'stopped'
             for retry in range(0, max_retries + 1):
+                time.sleep(10)
                 notebook_status_response = self.hook._api_request('GET',
                     url=check_notebook_status_url,
                 )
@@ -479,38 +480,6 @@ class YeeduNotebookRunOperator():
             logger.error(
                 f"An error occurred while checking notebook instance status: {e}")
 
-
-    def check_notebook_status(self):
-        try:
-            check_notebook_status_url = self.base_url + f'workspace/{self.workspace_id}/notebook/{self.notebook_id}'
-
-            max_retries = 3
-            status = None
-
-            # Check if the notebook status is 'stopped'
-            for retry in range(0, max_retries + 1):
-                notebook_status_response = self.hook._api_request('GET',
-                    url=check_notebook_status_url,
-                )
-
- 
-                if notebook_status_response.status_code == 200:
-
-                    status = notebook_status_response.json().get('notebook_status')
-                    notebook_execution_time = notebook_status_response.json().get('job_execution_time_sec')
-
-
-                elif retry == max_retries:
-                    logger.warning(
-                        f"Notebook_instance status did not match the desired status after {max_retries} retries.")
-                    raise Exception(
-                        f"Failed to get notebook status. Status code: {notebook_status_response.status_code}")
-                else:
-                    logger.info(
-                        f"Retrying in 10 seconds... (Retry {retry}/{max_retries})")
-                    time.sleep(10)
-
-            return status , notebook_execution_time
         except Exception as e:
             logger.error(
                 f"An error occurred while checking notebook instance status: {e}")
@@ -805,12 +774,9 @@ class YeeduNotebookRunOperator():
                 logger.info('Waiting {} cells to finish'.format(
                     len(self.notebook_cells)))
                 
-                notebook_status, notebook_execution_time = self.check_notebook_status()
+                notebook_status = self.check_notebook_instance_status()
                 logger.info(f"Current Notebook Status {notebook_status}")
                 if notebook_status in ['TERMINATED', 'STOPPED']:
-                    self.notebook_executed = False
-                    logger.info(f"Notebok Status {notebook_status}")
-                    self.exit_notebook(f'Exiting notebook as the Notebook status is {notebook_status}')
                     break
 
 
@@ -831,7 +797,6 @@ class YeeduNotebookRunOperator():
             if self.content_status == 'error': 
                 raise AirflowException(f"{self.error_value}")
             
-
             if notebook_status in ['TERMINATED']:
                 raise AirflowException("Notebook is Terminated")
 
@@ -840,8 +805,9 @@ class YeeduNotebookRunOperator():
                 f"Notebook execution failed with error:  {e}")
             raise e
         
-        finally:
-            self.notebook_executed = False
-            if self.check_notebook_instance_status() != 'STOPPED':
-                self.exit_notebook(
-                        f'Exiting notebook')
+        finally:            
+            if self.notebook_id is not None:
+                self.notebook_executed = False
+                if self.check_notebook_instance_status() != 'STOPPED':
+                    self.exit_notebook(
+                            f'Exiting notebook')
