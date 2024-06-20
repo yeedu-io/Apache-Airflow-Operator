@@ -479,10 +479,6 @@ class YeeduNotebookRunOperator():
         except Exception as e:
             logger.error(
                 f"An error occurred while checking notebook instance status: {e}")
-
-        except Exception as e:
-            logger.error(
-                f"An error occurred while checking notebook instance status: {e}")
             
 
     def stop_notebook(self):
