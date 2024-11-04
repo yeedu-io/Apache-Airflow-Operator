@@ -11,16 +11,18 @@ def read(*parts):
 
 setup(
     name='airflow-yeedu-operator',
-    version='1.0.2',
-    description='Submission and monitoring of jobs using the Yeedu API in Apache Airflow. ',
+    version='1.0.11',
+    description='Submission and monitoring of jobs and notebooks using the Yeedu API in Apache Airflow. ',
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
     author='Yeedu',
     author_email='yeedu@modak.com',
     packages=find_packages(),
-    install_requires=[
-        'apache-airflow>=2.5.0',
-        'requests>=2.27',
+   install_requires=[
+    'apache-airflow>=2.5.0',
+    'requests>=2.27',
+    'websocket-client>=1.8.0',
+    'rel>=0.4.9.19',
     ],
     project_urls={
         'GitHub': 'https://github.com/yeedu-io/Apache-Airflow-Operator',

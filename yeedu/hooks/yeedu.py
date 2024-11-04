@@ -28,6 +28,20 @@ import logging
 from typing import Tuple
 from airflow.hooks.base import BaseHook
 from airflow.exceptions import AirflowException
+from typing import Optional, Dict
+import json
+import os
+from requests.exceptions import RequestException
+from airflow.models import Variable
+
+
+
+session = requests.Session()
+
+headers: dict = {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
 
 class YeeduHook(BaseHook):
     """
@@ -43,43 +57,212 @@ class YeeduHook(BaseHook):
     :param kwargs: Additional keyword arguments.
     """
 
-    def __init__(self, token: str, hostname: str, workspace_id: int, *args, **kwargs) -> None:
+    def __init__(self, conf_id: int, tenant_id: str, base_url: str, workspace_id: int, connection_id: str, 
+                 token_variable_name: str,*args, **kwargs) -> None:
         """
         Initializes YeeduHook with the necessary configurations to communicate with the Yeedu API.
 
-        :param token: Yeedu API token.
-        :param hostname: Yeedu API hostname.
+        :param tenant_id: Yeedu API tenant_id.
+        :param base_url: Yeedu API base_url.
         :param workspace_id: The ID of the Yeedu workspace.
         """
 
         super().__init__(*args, **kwargs)
-        self.token: str = token
-        self.headers: dict = {
-            'accept': 'application/json',
-            'Authorization': f"Bearer {token}",
-            'Content-Type': 'application/json'
-        }
-        self.base_url: str = f'http://{hostname}/api/v1/workspace/{workspace_id}/'
+        self.tenant_id: str = tenant_id
+        self.conf_id = conf_id
+        self.workspace_id = workspace_id
+        self.connection_id = connection_id
+        self.connection = self.get_connection(self.connection_id)
+        self.base_url: str = base_url
+        self.token_variable_name = token_variable_name
+        self.YEEDU_SSL_CERT_FILE = self.connection.extra_dejson.get('YEEDU_SSL_CERT_FILE')
+        self.YEEDU_AIRFLOW_VERIFY_SSL = self.connection.extra_dejson.get('YEEDU_AIRFLOW_VERIFY_SSL', 'true')
+        session.verify = self.check_ssl()
 
-    def _api_request(self, method: str, url: str, data=None) -> requests.Response:
+
+    def check_ssl(self):
+        try:
+            # if not provided set to true by default
+            if self.YEEDU_AIRFLOW_VERIFY_SSL == 'true':
+
+                # check for the ssl cert dir
+                if not self.YEEDU_SSL_CERT_FILE:
+                    self.log.error(
+                        f"Please provide YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {self.YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
+                    raise AirflowException(f"Please provide YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {self.YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
+                else:
+                    # check if the file exists or not
+                    if os.path.isfile(self.YEEDU_SSL_CERT_FILE):
+                        return self.YEEDU_SSL_CERT_FILE
+                    else:
+                        self.log.error(
+                            f"Provided self.YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} doesnot exists")
+                        raise AirflowException(f"Provided self.YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} doesnot exists")
+            elif self.YEEDU_AIRFLOW_VERIFY_SSL == 'false':
+                self.log.info("YEEDU_AIRFLOW_VERIFY_SSL False")
+                return False
+
+            else:
+                self.log.error(
+                    f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {self.YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
+                raise AirflowException(f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {self.YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
+
+        except Exception as e:
+            self.log.error(f"Check SSL failed due to: {e}")
+            raise AirflowException(e)
+
+    
+    def get_auth_details(self):
+ 
+        auth_type = self.get_auth_type()
+
+        if auth_type in ['AAD','LDAP']:
+            username = self.connection.login
+            password = self.connection.password
+            if not username or not password:
+                raise AirflowException(f"Username or password is not set in the connection '{self.connection_id}'")
+            return username, password, None
+        elif auth_type=='AZURE_SSO': 
+            if self.check_token():
+                token = self.get_token()
+                return None, None, token
+            else:
+                raise AirflowException("The authentication type is set to Azure_SSO. Please provide a token to schedule jobs or notebooks.") 
+        else:
+             raise AirflowException(f"The current AirflowOperator only supports LDAP, AAD, and Azure_SSO authentication types, but received {auth_type}.")      
+
+    
+    def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None) -> requests.Response:
         """
-        Makes an HTTP request to the Yeedu API.
+        Makes an HTTP request to the Yeedu API with retries.
 
         :param method: The HTTP method (GET, POST, etc.).
         :param url: The URL of the API endpoint.
         :param data: The JSON data for the request.
+        :param params: Optional dictionary of query parameters.
         :return: The API response.
+        :raises AirflowException: If continuous request failures reach the threshold.
         """
+        max_attempts: int = 5
+        attempts_failure: int = 0
+        delay = 20
+
+        while attempts_failure < max_attempts:
+            try:
+                # Make the HTTP request
+                if method == 'POST':
+                    response = session.post(url, headers=headers, json=data, params=params)
+                else:
+                    response = session.get(url, headers=headers, json=data, params=params)
+
+                if response.status_code in [200,201,409]:
+                    return response 
+
+                else:
+                    attempts_failure += 1
+                    self.log.info(f"API request failed with status {response.status_code} (attempt {attempts_failure}/{max_attempts})")
+                    self.log.info(f"Sleeping for {delay} seconds before retrying...")
+                    time.sleep(delay)
+
+            except Exception as e:
+                attempts_failure += 1
+                self.log.error(f"Request failed due to exception: {e} (attempt {attempts_failure}/{max_attempts})")
+                self.log.info(f"Sleeping for {delay} seconds before retrying...")
+                time.sleep(delay)
+        
+        
+        raise AirflowException("Continuous API failure reached the threshold after multiple attempts")
+
+    def check_token(self):
+
+        if self.token_variable_name is not None:
+            return True
+        else:
+            return False
+
+
+    def get_token(self):
+        try:
+            token = Variable.get(self.token_variable_name,default_var=None)
+            return token
+        except Exception as e:
+            self.log.info(f"Please provide valid block name: {e}")
+            raise ValueError(e)
+
+            
+    def get_auth_type(self):
 
         try:
-            response: requests.Response = requests.request(method, url, headers=self.headers, json=data)
-            return response
-                        
+            auth_url = self.base_url+'login/auth_type'
+            auth_response = self._api_request('GET',auth_url)
+            self.log.info(f"auth_type: {auth_response.json().get('auth_type')}")
+            return auth_response.json().get('auth_type')
+
         except Exception as e:
+            self.log.info(f"An error occurred in getting auth_type: {e}")
             raise AirflowException(e)
-            
 
 
+    def yeedu_login(self,context):
+        try:
+            auth_type = self.get_auth_type()
+            username, password , token = self.get_auth_details()
+            if auth_type in ['LDAP', 'AAD']:   
+                login_url = self.base_url+'login'
+
+                data = {
+                        "username": f"{username}",
+                        "password": f"{password}",
+                        "auth_type": f"{auth_type}",
+                        "timeout": "infinity"
+                    }
+                login_response = self._api_request('POST',login_url,data)
+                if login_response.status_code == 200:
+
+                    headers['Authorization'] = f"Bearer {login_response.json().get('token')}"
+                    self.associate_tenant()
+                    return login_response.json().get('token')
+                
+            elif auth_type == 'AZURE_SSO':
+                if token is not None:  
+                    headers['Authorization'] = f"Bearer {token}"
+                    self.associate_tenant()
+                    return token              
+            else:
+                raise AirflowException(f"The current AirflowOperator only supports LDAP, AAD, and Azure_SSO authentication types, but received {auth_type}.")         
+        except Exception as e:
+            self.log.info(f"An error occurred during yeedu_login: {e}")
+            raise AirflowException(e)
+
+    def associate_tenant(self):
+        try:
+            # Construct the tenant URL
+            tenant_url = self.base_url+f'user/select/{self.tenant_id}'
+
+            # Make the POST request to associate the tenant
+            tenant_associate_response = self._api_request('POST',tenant_url)
+
+            if tenant_associate_response.status_code == 201:
+                self.log.info(
+                    f'Tenant associated successfully. Status Code: {tenant_associate_response.status_code}')
+                self.log.info(
+                    f'Tenant Association Response: {tenant_associate_response.json()}')
+                return 0
+            else:
+                raise AirflowException(tenant_associate_response.text)
+        except Exception as e:
+            self.log.info(f"An error occurred during associate_tenant: {e}")
+            raise AirflowException(e)  
+        
+    def yeedu_health_check(self) -> int:
+        """
+        Hitting Health Check API
+        """
+        health_check_url: str = self.base_url + f'healthCheck'
+        return self._api_request('GET', health_check_url)
+        
+
+        
     def submit_job(self, job_conf_id: str) -> int:
         """
         Submits a job to Yeedu.
@@ -89,7 +272,7 @@ class YeeduHook(BaseHook):
         """
 
         try:
-            job_url: str = self.base_url + 'spark/job'
+            job_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job'
             data: dict = {'job_conf_id': job_conf_id}
             response = self._api_request('POST', job_url, data)
             api_status_code = response.status_code
@@ -115,14 +298,13 @@ class YeeduHook(BaseHook):
         :param job_id: The ID of the job.
         :return: The API response containing job status.
         """
-
         try:
-            job_status_url: str = self.base_url + f'spark/job/{job_id}'
+            job_status_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/{job_id}'
             return self._api_request('GET', job_status_url)
-                        
         except Exception as e:
-            raise AirflowException(e)
-
+            self.log.info(f"An error occurred during fetching job_status: {e}")
+            raise AirflowException(e) 
+                        
             
 
     def get_job_logs(self, job_id: int, log_type: str) -> str:
@@ -135,13 +317,24 @@ class YeeduHook(BaseHook):
         """
 
         try:
-            logs_url: str = self.base_url + f'spark/job/{job_id}/log/{log_type}'
-            time.sleep(30)
+            logs_url: str = self.base_url + f'workspace/{self.workspace_id}/spark/job/{job_id}/log/{log_type}'
+            time.sleep(40)
             return self._api_request('GET', logs_url).text
         
         except Exception as e:
             raise AirflowException(e)
             
+        
+    def kill_job(self, job_id: int):
+        try:
+            job_kill_url = self.base_url + f'workspace/{self.workspace_id}/spark/job/kill/{job_id}'
+            self.log.info(f"Stopping job of Job Id {job_id}")
+            response = self._api_request('POST',job_kill_url)
+            if response.status_code == 201:
+                self.log.info("Stopped the Job")
+        except Exception as e:
+            raise AirflowException(e)
+
 
     def wait_for_completion(self, job_id: int) -> str:
         """
@@ -153,32 +346,28 @@ class YeeduHook(BaseHook):
         """
         
         try:
-            max_attempts: int = 5
-            attempts_failure: int = 0
-
             while True:
                 time.sleep(5)
-                # Check job status
-                response: requests.Response = self.get_job_status(job_id)
-                api_status_code: int = response.status_code
-                self.log.info("Current API Status Code: %s",api_status_code)
-                if api_status_code == 200:
-                    # If API status is a success, reset the failure attempts counter
-                    attempts_failure = 0
-                    job_status: str = response.json().get('job_status')
-                    self.log.info("Current Job Status: %s ", job_status)
-                    if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED']:
-                        break
-                # If API status is an error, increment the failure attempts counter
-                else:
-                    attempts_failure += 1
-                    self.log.info("failure attempts : %s", attempts_failure)
 
-                # If continuous failures reach the threshold, throw an error
-                if attempts_failure == max_attempts:
-                    raise AirflowException("Continuous API failure reached the threshold")
+                try:
+                #check job_status
+                    response: requests.Response = self.get_job_status(job_id)
+                    api_status_code: int = response.status_code
+                    self.log.info("Current API Status Code: %s",api_status_code)
 
-            return job_status
-        
+                    if api_status_code == 200:
+
+                        job_status: str = response.json().get('job_status')
+                        self.log.info("Current Job Status: %s ", job_status)
+                        if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED','STOPPED']:
+                            return job_status
+                    else:
+                        raise AirflowException(f"Failed to get job status, API returned status code: {api_status_code}") 
+              
+                except Exception as e:
+                    raise AirflowException(f"API failure while waiting for job completion: {e}")       
+      
         except Exception as e:
-            raise AirflowException(e)
+            raise AirflowException(f"An error occurred while waiting for job completion: {e}")
+        
+        
