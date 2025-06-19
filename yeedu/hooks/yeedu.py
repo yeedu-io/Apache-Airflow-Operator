@@ -34,10 +34,6 @@ import os
 from requests.exceptions import RequestException
 from airflow.models import Variable
 
-
-
-session = requests.Session()
-
 headers: dict = {
             'accept': 'application/json',
             'Content-Type': 'application/json'
@@ -77,8 +73,12 @@ class YeeduHook(BaseHook):
         self.token_variable_name = token_variable_name
         self.YEEDU_SSL_CERT_FILE = self.connection.extra_dejson.get('YEEDU_SSL_CERT_FILE')
         self.YEEDU_AIRFLOW_VERIFY_SSL = self.connection.extra_dejson.get('YEEDU_AIRFLOW_VERIFY_SSL', 'true')
-        session.verify = self.check_ssl()
+        self.session = requests.Session()
+        self.session.verify = self.check_ssl()
 
+
+    def get_session(self):
+        return self.session
 
     def check_ssl(self):
         try:
@@ -132,7 +132,7 @@ class YeeduHook(BaseHook):
              raise AirflowException(f"The current AirflowOperator only supports LDAP, AAD, and Azure_SSO authentication types, but received {auth_type}.")      
 
     
-    def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None) -> requests.Response:
+    def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None,max_attempts: int = 5,delay: int =20) -> requests.Response:
         """
         Makes an HTTP request to the Yeedu API with retries.
 
@@ -143,17 +143,15 @@ class YeeduHook(BaseHook):
         :return: The API response.
         :raises AirflowException: If continuous request failures reach the threshold.
         """
-        max_attempts: int = 5
         attempts_failure: int = 0
-        delay = 20
 
         while attempts_failure < max_attempts:
             try:
                 # Make the HTTP request
                 if method == 'POST':
-                    response = session.post(url, headers=headers, json=data, params=params)
+                    response = self.session.post(url, headers=headers, json=data, params=params)
                 else:
-                    response = session.get(url, headers=headers, json=data, params=params)
+                    response = self.session.get(url, headers=headers, json=data, params=params)
 
                 if response.status_code in [200,201,409]:
                     return response 
@@ -171,9 +169,13 @@ class YeeduHook(BaseHook):
                 time.sleep(delay)
         
         
-        raise AirflowException("Continuous API failure reached the threshold after multiple attempts")
+        raise AirflowException(f"Continuous API failure reached the threshold after multiple attempts - {response.text}")
 
     def check_token(self):
+        """
+        Checks whether the token variable name is set.
+        :return: True if the token variable name is set, False otherwise.
+        """
 
         if self.token_variable_name is not None:
             return True
@@ -182,6 +184,12 @@ class YeeduHook(BaseHook):
 
 
     def get_token(self):
+        """
+        Retrieves the token from Airflow Variables.
+
+        :return: The token value if available, or None if not found.
+        :raises ValueError: If there is an issue retrieving the token.
+        """
         try:
             token = Variable.get(self.token_variable_name,default_var=None)
             return token
@@ -191,6 +199,11 @@ class YeeduHook(BaseHook):
 
             
     def get_auth_type(self):
+        """
+        Retrieves the authentication type from the Yeedu API.
+        :return: The authentication type (e.g., LDAP, AAD, AZURE_SSO).
+        :raises AirflowException: If there is an error in getting the auth type.
+        """
 
         try:
             auth_url = self.base_url+'login/auth_type'
@@ -204,6 +217,12 @@ class YeeduHook(BaseHook):
 
 
     def yeedu_login(self,context):
+        """
+        Logs in to the Yeedu API and retrieves an authentication token.
+
+        :return: The authentication token.
+        :raises AirflowException: If there is an issue during the login process or if an unsupported auth type is returned.
+        """
         try:
             auth_type = self.get_auth_type()
             username, password , token = self.get_auth_details()
@@ -235,6 +254,12 @@ class YeeduHook(BaseHook):
             raise AirflowException(e)
 
     def associate_tenant(self):
+        """
+        Associates a tenant to the user in the Yeedu API.
+
+        :return: 0 if the tenant is successfully associated.
+        :raises AirflowException: If there is an issue associating the tenant or if the response is not successful.
+        """
         try:
             # Construct the tenant URL
             tenant_url = self.base_url+f'user/select/{self.tenant_id}'
