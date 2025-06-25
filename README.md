@@ -1,39 +1,92 @@
 # Airflow Yeedu Operator
 [![PyPI version](https://badge.fury.io/py/airflow-yeedu-operator.png)](https://badge.fury.io/py/airflow-yeedu-operator)
 
+> **Note:** This version of `airflow-yeedu-operator` is compatible only with **Apache Airflow 2.x**. Apache Airflow 3.x is **not supported**.
+
+---
+
 ## Installation
 
-To use the Yeedu Operator in your Airflow environment, install it using the following command:
+To install the Yeedu Operator in your Airflow environment, run:
 
 ```bash
 pip3 install airflow-yeedu-operator
 ```
 
-# DAG: Yeedu Job Execution
+---
 
 ## Overview
 
-The `YeeduJobRunOperator` in this DAG facilitates the submission and monitoring of jobs using the Yeedu API in Apache Airflow. This DAG enables users to execute Yeedu jobs and handle their completion status and logs seamlessly within their Airflow environment.
+The `YeeduOperator` enables Airflow users to submit and monitor Spark jobs and notebooks in **Yeedu**. It provides a smooth interface to:
+
+- Submit notebooks and jobs to Yeedu
+- Monitor job progress and completion
+- Handle failures and capture logs in Airflow UI
+
+---
 
 ## Prerequisites
 
-Before using this DAG, ensure you have:
+- Apache Airflow 2.x environment
+- Valid credentials to interact with the Yeedu API.
+- Yeedu Authentication (LDAP, AAD, or SSO)
+- Valid certificate for SSL if applicable
 
-- Access to the Yeedu API.
-- Proper configuration of Airflow with required connections and variables (if applicable).
+---
 
-## Usage
+## Airflow Connection Setup
 
-### DAG Initialization
+### Step 1: Create Airflow Connection
 
-Import the necessary modules and instantiate the DAG with required arguments and schedule interval.
+1. In the Airflow UI, go to **Admin > Connections**
+2. Click the **+ Add Connection** button to create a new connection
+
+Fill in the following fields:
+
+| Field        | Value / Example                       |
+|--------------|----------------------------------------|
+| Conn Id      | `yeedu_connection`                    |
+| Conn Type    | `HTTP`                                |
+| Login        | Your LDAP/AAD username (if applicable)|
+| Password     | Your password (if applicable)         |
+| Extra        | JSON with SSL options (see below)     |
+
+### Extra JSON Field
+
+```json
+{
+    "YEEDU_AIRFLOW_VERIFY_SSL": "true",
+    "YEEDU_SSL_CERT_FILE": "/path/to/cert/file"
+}
+```
+
+> Replace `/path/to/cert/file` with the actual path to your certificate file.
+
+---
+
+## SSO Token Setup (Only for SSO auth)
+
+If your Yeedu authentication method is **SSO**, follow these steps:
+
+1. Go to **Admin > Variables**
+2. Click **+ Add Variable**
+3. Enter:
+   - **Key**: e.g., `yeedu_sso_token`
+   - **Value**: your Yeedu login token
+
+You will refer to this variable in your DAG using `token_variable_name`.
+
+---
+
+## Example DAG
+
+### DAG Definition
 
 ```python
 from datetime import datetime, timedelta
 from airflow import DAG
-from yeedu.operators.yeedu import YeeduJobRunOperator
+from yeedu.operators.yeedu import YeeduOperator
 
-# Define DAG arguments
 default_args = {
     'owner': 'airflow',
     'depends_on_past': False,
@@ -42,7 +95,6 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-# Instantiate DAG
 dag = DAG(
     'yeedu_job_execution',
     default_args=default_args,
@@ -51,27 +103,63 @@ dag = DAG(
     catchup=False,
 )
 ```
-### Task Initialization
 
-Create tasks using `YeeduJobRunOperator` to perform various Yeedu API operations.
-# Define YeeduJobRunOperator tasks
+---
+
+## Task Configuration
+
+### LDAP / AAD Authentication
+
+Use `Login` and `Password` in the Airflow connection:
 
 ```python
-    submit_job_task = YeeduJobRunOperator(
-        dag=dag,
-        task_id='demo_dag',
-        hostname='yeedu.example.com',  # Replace with your Yeedu API hostname
-        token='your_yeedu_api_token',  # Replace with your Yeedu API token
-        job_conf_id='your_job_config_id',  # Replace with your job config ID
-        workspace_id='your_workspace_id',  # Replace with your Yeedu workspace ID
-    )
+submit_job_task = YeeduOperator(
+    task_id='LDAP_TASK',
+    job_url='https://hostname:{restapi_port}/tenant/tenant_id/workspace/workspace_id/spark/notebook/notebook_id', 
+    #Replace with your Job/Notebook Url
+    connection_id='yeedu_connection', # Replace with your Connection Id
+    dag=dag,
+)
 ```
-### Execution
 
-To execute this DAG:
+> Copy the Job/Notebook URL from the Yeedu UI and replace the port in the URL with the actual `restapi_port` value before using it in the DAG.
 
-1. Ensure all required configurations (job config ID, API token, hostname, workspace ID) are correctly provided in the task definitions.
-2. Place the DAG file in the appropriate Airflow DAGs folder.
-3. Trigger the DAG manually or based on the defined schedule interval.
-4. Monitor the Airflow UI for task execution and logs.
+---
 
+### SSO Authentication
+
+Use a token stored in Airflow Variables:
+
+```python
+submit_job_task = YeeduOperator(
+    task_id='SSO_TASK',
+    job_url='https://hostname:{restapi_port}/tenant/tenant_id/workspace/workspace_id/spark/notebook/notebook_id', 
+    #Replace with your Job/Notebook Url
+    connection_id='yeedu_connection',
+    token_variable_name='yeedu_sso_token',  # Replace with your variable key
+    dag=dag,
+)
+```
+
+> You must skip `Login` and `Password` in the Airflow connection for SSO.
+
+---
+
+## Execution Steps
+
+1. Save your DAG file in the `dags/` folder of your Airflow installation.
+2. Ensure the connection and (if needed) token variable are configured correctly.
+3. Trigger the DAG manually or let it run on the scheduled interval.
+4. Monitor the **Airflow UI/Yeedu UI** for execution progress and logs.
+
+---
+
+## Screenshot (Connection Example)
+
+![Airflow Connection](images/yeedu_connection.png)
+
+## Screenshot (Variable Example)
+
+![Airflow Variable](images/token_variable.png)
+
+---
