@@ -184,7 +184,7 @@ class YeeduHook(BaseHook):
 
 
     def get_token(self):
-        """
+        """self.tenant_id
         Retrieves the token from Airflow Variables.
 
         :return: The token value if available, or None if not found.
@@ -253,6 +253,26 @@ class YeeduHook(BaseHook):
             self.log.info(f"An error occurred during yeedu_login: {e}")
             raise AirflowException(e)
 
+    def yeedu_logout(self,context):
+        try:
+            # Construct the logout URL
+            logout_url = self.base_url+'logout'
+
+            # Make the POST request to associate the tenant
+            logout_response = self._api_request('POST',logout_url)
+
+            if logout_response.status_code == 200:
+                self.log.info(
+                    f'Status Code: {logout_response.status_code}')
+                self.log.info(
+                    f'{logout_response.text}')
+                return 0
+            else:
+                raise AirflowException(logout_response.text)
+        except Exception as e:
+            self.log.info(f"An error occurred during yeedu_logout: {e}")
+            raise AirflowException(e)
+        
     def associate_tenant(self):
         """
         Associates a tenant to the user in the Yeedu API.
@@ -262,10 +282,11 @@ class YeeduHook(BaseHook):
         """
         try:
             # Construct the tenant URL
-            tenant_url = self.base_url+f'user/select/{self.tenant_id}'
+            tenant_url = self.base_url + f'user/select/{self.tenant_id}'
 
             # Make the POST request to associate the tenant
-            tenant_associate_response = self._api_request('POST',tenant_url)
+            tenant_associate_response = self._api_request('POST', tenant_url)
+            self.log.info(f"Tenant Association Response: {tenant_associate_response.text}")
 
             if tenant_associate_response.status_code == 201:
                 self.log.info(
@@ -276,6 +297,16 @@ class YeeduHook(BaseHook):
             else:
                 raise AirflowException(tenant_associate_response.text)
         except Exception as e:
+            # Only ignore if the error text matches the "already associated" message
+            error_text = str(e)
+            if (
+                f"Association to the tenant Id: {self.tenant_id}" in error_text and
+                "is not allowed for the current session." in error_text
+            ):
+                self.log.warning(
+                    f"Tenant association skipped: {error_text} as it is already associated"
+                )
+                return 0
             self.log.info(f"An error occurred during associate_tenant: {e}")
             raise AirflowException(e)  
         
@@ -394,5 +425,3 @@ class YeeduHook(BaseHook):
       
         except Exception as e:
             raise AirflowException(f"An error occurred while waiting for job completion: {e}")
-        
-        
