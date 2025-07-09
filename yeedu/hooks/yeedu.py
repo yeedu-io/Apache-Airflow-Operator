@@ -34,10 +34,16 @@ import os
 from requests.exceptions import RequestException
 from airflow.models import Variable
 
-headers: dict = {
-            'accept': 'application/json',
-            'Content-Type': 'application/json'
-        }
+def get_default_headers():
+    """
+    Returns the default headers for API requests without authentication.
+    
+    :return: Dictionary containing the default headers.
+    """
+    return {
+        'accept': 'application/json',
+        'Content-Type': 'application/json'
+    }
 
 class YeeduHook(BaseHook):
     """
@@ -75,10 +81,23 @@ class YeeduHook(BaseHook):
         self.YEEDU_AIRFLOW_VERIFY_SSL = self.connection.extra_dejson.get('YEEDU_AIRFLOW_VERIFY_SSL', 'true')
         self.session = requests.Session()
         self.session.verify = self.check_ssl()
-
+        # Initialize headers using the get_default_headers function
+        self.headers: dict = get_default_headers()
+        # Auth token storage
+        self.auth_token = None
 
     def get_session(self):
         return self.session
+    
+    def get_auth_headers(self):
+        """
+        Returns the current headers with authorization token if available.
+        This method should be used by other components to ensure they have
+        the latest headers with authentication.
+        
+        :return: Dictionary containing headers with auth token if available.
+        """
+        return self.headers.copy()
 
     def check_ssl(self):
         try:
@@ -145,13 +164,17 @@ class YeeduHook(BaseHook):
         """
         attempts_failure: int = 0
 
+        # Ensure session headers are up to date before each request
+        if self.auth_token and 'Authorization' not in self.session.headers:
+            self.session.headers.update({'Authorization': f"Bearer {self.auth_token}"})
+
         while attempts_failure < max_attempts:
             try:
                 # Make the HTTP request
                 if method == 'POST':
-                    response = self.session.post(url, headers=headers, json=data, params=params)
+                    response = self.session.post(url, headers=self.headers, json=data, params=params)
                 else:
-                    response = self.session.get(url, headers=headers, json=data, params=params)
+                    response = self.session.get(url, headers=self.headers, json=data, params=params)
 
                 if response.status_code in [200,201,409]:
                     return response 
@@ -167,7 +190,6 @@ class YeeduHook(BaseHook):
                 self.log.error(f"Request failed due to exception: {e} (attempt {attempts_failure}/{max_attempts})")
                 self.log.info(f"Sleeping for {delay} seconds before retrying...")
                 time.sleep(delay)
-        
         
         raise AirflowException(f"Continuous API failure reached the threshold after multiple attempts - {response.text}")
 
@@ -237,14 +259,17 @@ class YeeduHook(BaseHook):
                     }
                 login_response = self._api_request('POST',login_url,data)
                 if login_response.status_code == 200:
-
-                    headers['Authorization'] = f"Bearer {login_response.json().get('token')}"
+                    self.auth_token = login_response.json().get('token')
+                    self.headers['Authorization'] = f"Bearer {self.auth_token}"
+                    self.session.headers.update(self.headers)  # Update session headers too
                     self.associate_tenant()
-                    return login_response.json().get('token')
+                    return self.auth_token
                 
             elif auth_type == 'AZURE_SSO':
-                if token is not None:  
-                    headers['Authorization'] = f"Bearer {token}"
+                if token is not None:
+                    self.auth_token = token
+                    self.headers['Authorization'] = f"Bearer {token}"
+                    self.session.headers.update(self.headers)  # Update session headers too
                     self.associate_tenant()
                     return token              
             else:
@@ -425,3 +450,23 @@ class YeeduHook(BaseHook):
       
         except Exception as e:
             raise AirflowException(f"An error occurred while waiting for job completion: {e}")
+    
+    def ensure_authenticated(self):
+        """
+        Ensures the session has a valid authentication token.
+        If no token exists, attempts to obtain one through login.
+        
+        :return: True if authentication is confirmed, False otherwise.
+        """
+        if not self.auth_token or 'Authorization' not in self.headers:
+            try:
+                # We need a dummy context for the login method
+                context = {}
+                self.yeedu_login(context)
+                return True
+            except Exception as e:
+                self.log.error(f"Failed to authenticate: {e}")
+                return False
+        else:
+            # Already has auth token
+            return True
