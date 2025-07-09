@@ -10,7 +10,7 @@ import rel
 import signal
 from datetime import datetime, timezone
 from airflow.exceptions import AirflowException
-from yeedu.hooks.yeedu import YeeduHook, headers
+from yeedu.hooks.yeedu import YeeduHook
 from airflow.utils.decorators import apply_defaults
 
 
@@ -132,7 +132,8 @@ class YeeduNotebookRunOperator:
         try:
             while True:
                 try:
-                    response = self.session.get(url, headers=headers, params=get_params)
+                    # Use the hook's session and headers
+                    response = self.session.get(url, headers=self.hook.headers, params=get_params)
                     status_code = response.status_code
                     logger.info(f"Get Active Notebooks - GET Status Code: {status_code}")
                     logger.info(f"Get Active Notebooks - GET Response: {response.json()}")
@@ -217,7 +218,8 @@ class YeeduNotebookRunOperator:
 
     def get_websocket_token(self):
         try:
-            token = headers.get("Authorization").split(" ")[1]
+            # Use the hook's headers instead of importing from module level
+            token = self.hook.headers.get("Authorization").split(" ")[1]
             proxy_url = (
                 self.base_url
                 + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/ws"
