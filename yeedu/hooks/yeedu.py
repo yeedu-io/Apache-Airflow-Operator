@@ -40,10 +40,6 @@ def get_default_headers():
     
     :return: Dictionary containing the default headers.
     """
-    return {
-        'accept': 'application/json',
-        'Content-Type': 'application/json'
-    }
 
 class YeeduHook(BaseHook):
     """
@@ -82,7 +78,11 @@ class YeeduHook(BaseHook):
         self.session = requests.Session()
         self.session.verify = self.check_ssl()
         # Initialize headers using the get_default_headers function
-        self.headers: dict = get_default_headers()
+        self.headers: dict = {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+
         # Auth token storage
         self.auth_token = None
 
@@ -97,7 +97,10 @@ class YeeduHook(BaseHook):
         
         :return: Dictionary containing headers with auth token if available.
         """
-        return self.headers.copy()
+        headers = self.headers.copy()
+        if self.auth_token:
+            headers['Authorization'] = f"Bearer {self.auth_token}"
+        return headers
 
     def check_ssl(self):
         try:
@@ -170,11 +173,11 @@ class YeeduHook(BaseHook):
 
         while attempts_failure < max_attempts:
             try:
-                # Make the HTTP request
+                # Make the HTTP request - use session headers which include auth token
                 if method == 'POST':
-                    response = self.session.post(url, headers=self.headers, json=data, params=params)
+                    response = self.session.post(url, json=data, params=params)
                 else:
-                    response = self.session.get(url, headers=self.headers, json=data, params=params)
+                    response = self.session.get(url, json=data, params=params)
 
                 if response.status_code in [200,201,409]:
                     return response 
