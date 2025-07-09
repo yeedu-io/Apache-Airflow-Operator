@@ -102,6 +102,28 @@ class YeeduHook(BaseHook):
             headers['Authorization'] = f"Bearer {self.auth_token}"
         return headers
 
+    def _update_session_headers(self):
+        """
+        Updates the session headers to ensure they include the current authentication token.
+        This method synchronizes the instance headers with the session headers.
+        """
+        if self.auth_token:
+            # Update both instance headers and session headers
+            self.headers['Authorization'] = f"Bearer {self.auth_token}"
+            self.session.headers.update(self.headers)
+        else:
+            # Remove Authorization header if no token
+            self.headers.pop('Authorization', None)
+            self.session.headers.pop('Authorization', None)
+
+    def clear_authentication(self):
+        """
+        Clears the authentication token and removes it from both headers and session.
+        This method should be called during logout or when authentication needs to be reset.
+        """
+        self.auth_token = None
+        self._update_session_headers()
+
     def check_ssl(self):
         try:
             # if not provided set to true by default
@@ -167,9 +189,11 @@ class YeeduHook(BaseHook):
         """
         attempts_failure: int = 0
 
+        # Ensure authentication is available before making requests
+        self.ensure_authenticated()
+        
         # Ensure session headers are up to date before each request
-        if self.auth_token and 'Authorization' not in self.session.headers:
-            self.session.headers.update({'Authorization': f"Bearer {self.auth_token}"})
+        self._update_session_headers()
 
         while attempts_failure < max_attempts:
             try:
@@ -263,16 +287,14 @@ class YeeduHook(BaseHook):
                 login_response = self._api_request('POST',login_url,data)
                 if login_response.status_code == 200:
                     self.auth_token = login_response.json().get('token')
-                    self.headers['Authorization'] = f"Bearer {self.auth_token}"
-                    self.session.headers.update(self.headers)  # Update session headers too
+                    self._update_session_headers()  # Update both headers and session
                     self.associate_tenant()
                     return self.auth_token
                 
             elif auth_type == 'AZURE_SSO':
                 if token is not None:
                     self.auth_token = token
-                    self.headers['Authorization'] = f"Bearer {token}"
-                    self.session.headers.update(self.headers)  # Update session headers too
+                    self._update_session_headers()  # Update both headers and session
                     self.associate_tenant()
                     return token              
             else:
@@ -286,7 +308,7 @@ class YeeduHook(BaseHook):
             # Construct the logout URL
             logout_url = self.base_url+'logout'
 
-            # Make the POST request to associate the tenant
+            # Make the POST request to logout
             logout_response = self._api_request('POST',logout_url)
 
             if logout_response.status_code == 200:
@@ -294,11 +316,15 @@ class YeeduHook(BaseHook):
                     f'Status Code: {logout_response.status_code}')
                 self.log.info(
                     f'{logout_response.text}')
+                # Clear authentication after successful logout
+                self.clear_authentication()
                 return 0
             else:
                 raise AirflowException(logout_response.text)
         except Exception as e:
             self.log.info(f"An error occurred during yeedu_logout: {e}")
+            # Clear authentication even if logout fails
+            self.clear_authentication()
             raise AirflowException(e)
         
     def associate_tenant(self):
@@ -466,10 +492,13 @@ class YeeduHook(BaseHook):
                 # We need a dummy context for the login method
                 context = {}
                 self.yeedu_login(context)
+                # After login, ensure headers are properly updated
+                self._update_session_headers()
                 return True
             except Exception as e:
                 self.log.error(f"Failed to authenticate: {e}")
                 return False
         else:
-            # Already has auth token
+            # Already has auth token, but ensure headers are synchronized
+            self._update_session_headers()
             return True
