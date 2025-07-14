@@ -542,6 +542,7 @@ class YeeduNotebookRunOperator:
                 content = response.get("content", {})
                 logger.debug(f"Content {content}")
                 self.content_status = content.get("status", "")
+                self.content_ename = content.get("ename", "")
                 logger.debug(self.content_status)
                 msg_id = response["parent_header"]["msg_id"]
                 logger.info(f"Message Id: {msg_id}")
@@ -863,6 +864,11 @@ class YeeduNotebookRunOperator:
                     self.exit_notebook(f"Exiting notebook from main function")
             self.close_websocket_connection()
             if self.content_status == "error":
+                # Kept to catch the error raised from dbutils.notebook.exit()
+                if self.content_ename is not None and self.content_ename == "CleanExit":
+                    logger.info(
+                        f"Notebook execution completed with no errors.")
+            else:
                 raise AirflowException(f"{self.error_value}")
             if notebook_status in ["TERMINATED", "ERROR"]:
                 notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{self.notebook_id}/run-logs?log_type=stderr".replace(
