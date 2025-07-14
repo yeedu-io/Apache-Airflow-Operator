@@ -8,6 +8,7 @@ from airflow.utils.decorators import apply_defaults
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class YeeduJobRunOperator:
     template_fields: Tuple[str] = ("job_id",)
 
@@ -44,6 +45,7 @@ class YeeduJobRunOperator:
 
     def execute(self, context: dict) -> None:
         try:
+            self.hook.yeedu_login(context)
             logger.info("Job Config Id: %s", self.job_conf_id)
             job_id = self.hook.submit_job(self.job_conf_id)
             restapi_port = self.restapi_port
@@ -52,7 +54,8 @@ class YeeduJobRunOperator:
             job_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{job_id}/run-metrics?type=spark_job".replace(
                 f":{restapi_port}/api/v1", ""
             )
-            logger.info("Check Yeedu Job run status and logs here " + job_run_url)
+            logger.info(
+                "Check Yeedu Job run status and logs here " + job_run_url)
             job_status: str = self.hook.wait_for_completion(job_id)
 
             logger.info("Final Job Status: %s", job_status)
@@ -71,7 +74,8 @@ class YeeduJobRunOperator:
 
         finally:
             logger.info("Stopping job in finally")
-            job_status = self.hook.get_job_status(job_id).json().get("job_status")
+            job_status = self.hook.get_job_status(
+                job_id).json().get("job_status")
             if job_status not in ["ERROR", "TERMINATED", "KILLED", "STOPPED", "DONE"]:
                 self.hook.kill_job(job_id)
             # Only logout for LDAP or AAD

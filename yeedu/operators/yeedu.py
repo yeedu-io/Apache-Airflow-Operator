@@ -34,6 +34,7 @@ logging.basicConfig(level=logging.INFO)  # Set the logging level to INFO
 # Create a logger object
 logger = logging.getLogger(__name__)
 
+
 class YeeduOperator(BaseOperator):
     @apply_defaults
     def __init__(
@@ -73,14 +74,6 @@ class YeeduOperator(BaseOperator):
             self.conf_id,
             self.restapi_port,
         ) = self.extract_ids(self.job_url)
-        self.hook: YeeduHook = YeeduHook(
-            conf_id=self.conf_id,
-            tenant_id=self.tenant_id,
-            base_url=self.base_url,
-            workspace_id=self.workspace_id,
-            connection_id=self.connection_id,
-            token_variable_name=self.token_variable_name,
-        )
 
     def check_url(self, job_url):
         """
@@ -96,7 +89,7 @@ class YeeduOperator(BaseOperator):
             return job_url
         else:
             raise AirflowException(f"url is not set'{job_url}'")
-        
+
     def extract_ids(self, url):
         parsed_url = urlparse(url)
         restapi_port = urlparse(url).port
@@ -138,7 +131,7 @@ class YeeduOperator(BaseOperator):
             int(conf_id),
             int(restapi_port),
         )
-        
+
     def execute(self, context):
         """
         Execute the YeeduOperator.
@@ -150,7 +143,6 @@ class YeeduOperator(BaseOperator):
         :type context: dict
         """
         if self.job_type == "conf":
-            self.hook.yeedu_login(context)
             job_operator = YeeduJobRunOperator(
                 job_conf_id=self.conf_id,
                 base_url=self.base_url,
@@ -162,7 +154,6 @@ class YeeduOperator(BaseOperator):
             )
             return job_operator.execute(context)
         elif self.job_type == "notebook":
-            self.hook.yeedu_login(context)
             notebook_operator = YeeduNotebookRunOperator(
                 base_url=self.base_url,
                 workspace_id=self.workspace_id,
