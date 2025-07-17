@@ -25,6 +25,7 @@ from yeedu.operators.job_operator import YeeduJobRunOperator
 from yeedu.operators.notebook_operator import YeeduNotebookRunOperator
 from yeedu.operators.healthcheck_operator import YeeduHealthCheckOperator
 import logging
+from typing import List
 from urllib.parse import urlparse
 
 # Configure the logging system
@@ -42,7 +43,7 @@ class YeeduOperator(BaseOperator):
         connection_id: str,
         token_variable_name: str = None,
         arguments: str = None,
-        conf: list[str] = None,
+        conf: List[str] = None,
         *args,
         **kwargs
     ):
@@ -61,7 +62,7 @@ class YeeduOperator(BaseOperator):
         arguments (str, optional): Arguments to pass to the job run. 
             Note: This parameter is only used for the job_type "job" and will be silently ignored 
             for notebooks.
-        conf (list[str], optional): Configuration list for the job run. 
+        conf (List[str], optional): Configuration list for the job run. 
             Note: This parameter is only used for the job_type "job" and will be silently ignored 
             for notebooks.
             Must be provided as a list using square brackets [].
@@ -106,7 +107,7 @@ class YeeduOperator(BaseOperator):
         ) = self.extract_ids(self.job_url)
         # Validate and process conf if provided
         if conf is not None and self.job_type == "conf":
-            if not isinstance(conf, list):
+            if not isinstance(conf, List):
                 raise AirflowException("conf parameter must be a list")
             self.conf = self._validate_conf(conf)  # Store processed conf
         else:
@@ -212,7 +213,7 @@ class YeeduOperator(BaseOperator):
         else:
             raise AirflowException(f"Unknown job_type: {self.job_type}")
 
-    def _validate_conf(self, conf: list[str]) -> list[str]:
+    def _validate_conf(self, conf: List[str]) -> List[str]:
         """
         Validate configuration format and process duplicates.
 

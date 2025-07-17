@@ -26,7 +26,7 @@ import requests
 import time
 from airflow.hooks.base import BaseHook
 from airflow.exceptions import AirflowException
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 import os
 from airflow.models import Variable
 
@@ -343,7 +343,7 @@ class YeeduHook(BaseHook):
         health_check_url: str = self.base_url + f'healthCheck'
         return self._api_request('GET', health_check_url)
 
-    def submit_job(self, job_conf_id: str, arguments: str = None, conf: list[str] = None) -> int:
+    def submit_job(self, job_conf_id: str, arguments: str = None, conf: List[str] = None) -> int:
         """
         Submits a job to Yeedu.
 

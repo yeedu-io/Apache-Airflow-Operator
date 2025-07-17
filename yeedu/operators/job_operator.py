@@ -1,4 +1,4 @@
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, List
 from airflow.exceptions import AirflowException
 import logging
 from yeedu.hooks.yeedu import YeeduHook
@@ -23,7 +23,7 @@ class YeeduJobRunOperator:
         token_variable_name: str,
         restapi_port: int,
         arguments: str = None,
-        conf: list[str] = None,
+        conf: List[str] = None,
         *args,
         **kwargs,
     ) -> None:
