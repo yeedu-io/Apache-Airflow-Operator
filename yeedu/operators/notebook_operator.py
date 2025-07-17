@@ -840,7 +840,7 @@ class YeeduNotebookRunOperator:
                 notebook_status = self.check_notebook_instance_status()
                 if len(self.notebook_cells) != 0 and (
                     notebook_status == "STOPPED"
-                    or not (self.ws.sock and self.ws.sock.connected)
+                    or not (self.ws and self.ws.sock and self.ws.sock.connected)
                 ):
                     self.notebook_executed = False
                     raise AirflowException(
@@ -868,8 +868,8 @@ class YeeduNotebookRunOperator:
                 if self.content_ename is not None and self.content_ename == "CleanExit":
                     logger.info(
                         f"Notebook execution completed with no errors.")
-            else:
-                raise AirflowException(f"{self.error_value}")
+                else:
+                    raise AirflowException(f"{self.error_value}")
             if notebook_status in ["TERMINATED", "ERROR"]:
                 notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{self.notebook_id}/run-logs?log_type=stderr".replace(
                     f":{self.restapi_port}/api/v1", ""
