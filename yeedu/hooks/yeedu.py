@@ -24,14 +24,10 @@ operators talk to the ``/spark/job`
 
 import requests
 import time
-import logging
-from typing import Tuple
 from airflow.hooks.base import BaseHook
 from airflow.exceptions import AirflowException
 from typing import Optional, Dict
-import json
 import os
-from requests.exceptions import RequestException
 from airflow.models import Variable
 
 
@@ -347,11 +343,13 @@ class YeeduHook(BaseHook):
         health_check_url: str = self.base_url + f'healthCheck'
         return self._api_request('GET', health_check_url)
 
-    def submit_job(self, job_conf_id: str) -> int:
+    def submit_job(self, job_conf_id: str, arguments: str = None, conf: list[str] = None) -> int:
         """
         Submits a job to Yeedu.
 
         :param job_conf_id: The job configuration ID.
+        :param arguments: Optional arguments to pass to the job
+        :param conf: Optional configuration for the job
         :return: The ID of the submitted job.
         """
 
@@ -359,6 +357,12 @@ class YeeduHook(BaseHook):
             job_url: str = self.base_url + \
                 f'workspace/{self.workspace_id}/spark/job'
             data: dict = {'job_conf_id': job_conf_id}
+
+            if arguments is not None:
+                data['arguments'] = arguments
+            if conf is not None:
+                data['conf'] = conf
+
             response = self._api_request('POST', job_url, data)
             api_status_code = response.status_code
             response_json = response.json()

@@ -24,7 +24,6 @@ from airflow.utils.decorators import apply_defaults
 from yeedu.operators.job_operator import YeeduJobRunOperator
 from yeedu.operators.notebook_operator import YeeduNotebookRunOperator
 from yeedu.operators.healthcheck_operator import YeeduHealthCheckOperator
-from yeedu.hooks.yeedu import YeeduHook
 import logging
 from urllib.parse import urlparse
 
@@ -39,9 +38,11 @@ class YeeduOperator(BaseOperator):
     @apply_defaults
     def __init__(
         self,
-        job_url,
-        connection_id,
-        token_variable_name=None,
+        job_url: str,
+        connection_id: str,
+        token_variable_name: str = None,
+        arguments: str = None,
+        conf: list[str] = None,
         *args,
         **kwargs
     ):
@@ -57,15 +58,44 @@ class YeeduOperator(BaseOperator):
             - extra (dict): Additional parameters in JSON format, including:
                 - YEEDU_AIRFLOW_VERIFY_SSL (str): true or false to verify SSL.
                 - YEEDU_SSL_CERT_FILE (str): Path to the SSL certificate file.
+        arguments (str, optional): Arguments to pass to the job run. 
+            Note: This parameter is only used for the job_type "job" and will be silently ignored 
+            for notebooks.
+        conf (list[str], optional): Configuration list for the job run. 
+            Note: This parameter is only used for the job_type "job" and will be silently ignored 
+            for notebooks.
+            Must be provided as a list using square brackets [].
+            Each configuration item must be in 'key=value' format.
+            If duplicate keys are provided, only the last occurrence will be used.
 
+            Usage Example:
+                YeeduOperator(
+                    job_url="your_url",
+                    connection_id="your_conn_id",
+                    conf=[
+                        "spark.driver.memory=4g",
+                        "spark.executor.memory=8g"
+                    ]
+                )
+
+            Invalid formats:
+                conf=("key=value",)         # Wrong: Using tuple () instead of list []
+                conf=["key value"]          # Wrong: Missing '=' delimiter
+                conf=["key="]               # Wrong: Empty value
+
+            Duplicate handling:
+                conf=[                      # Only "spark.driver.memory=8g" will be used
+                    "spark.driver.memory=4g",
+                    "spark.driver.memory=8g"
+                ]
         *args: Additional positional arguments.
         **kwargs: Additional keyword arguments.
         """
-
         super().__init__(*args, **kwargs)
         self.job_url = job_url
         self.connection_id = connection_id
         self.token_variable_name = token_variable_name
+        self.arguments = arguments
         (
             self.base_url,
             self.tenant_id,
@@ -74,6 +104,13 @@ class YeeduOperator(BaseOperator):
             self.conf_id,
             self.restapi_port,
         ) = self.extract_ids(self.job_url)
+        # Validate and process conf if provided
+        if conf is not None and self.job_type == "conf":
+            if not isinstance(conf, list):
+                raise AirflowException("conf parameter must be a list")
+            self.conf = self._validate_conf(conf)  # Store processed conf
+        else:
+            self.conf = None
 
     def check_url(self, job_url):
         """
@@ -151,6 +188,8 @@ class YeeduOperator(BaseOperator):
                 connection_id=self.connection_id,
                 token_variable_name=self.token_variable_name,
                 restapi_port=self.restapi_port,
+                arguments=self.arguments,
+                conf=self.conf,
             )
             return job_operator.execute(context)
         elif self.job_type == "notebook":
@@ -172,3 +211,33 @@ class YeeduOperator(BaseOperator):
             return health_check_operator.execute(context)
         else:
             raise AirflowException(f"Unknown job_type: {self.job_type}")
+
+    def _validate_conf(self, conf: list[str]) -> list[str]:
+        """
+        Validate configuration format and process duplicates.
+
+        :param conf: Set of configuration strings
+        :return: Processed list with only the last occurrence of duplicate keys.
+        :raises AirflowException: If any conf item is not in correct format or if validation fails.
+        """
+
+        processed_conf = {}
+        for item in conf:
+            if '=' not in item:
+                raise AirflowException(
+                    f"Invalid conf format for '{item}'. Must be in 'key=value' format")
+
+            key, value = item.split(sep='=', maxsplit=1)
+            if not key or not value:
+                raise AirflowException(
+                    f"Invalid conf item '{item}'. Both key and value must be non-empty")
+
+            if key in processed_conf:
+                logger.warning(
+                    f"Duplicate configuration key found: '{key}'. "
+                    f"Value '{processed_conf[key]}' will be overwritten with '{value}'"
+                )
+            processed_conf[key] = value
+
+        # Convert processed dict back to list of "key=value" strings
+        return [f"{k}={v}" for k, v in processed_conf.items()]

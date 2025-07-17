@@ -22,6 +22,8 @@ class YeeduJobRunOperator:
         connection_id: str,
         token_variable_name: str,
         restapi_port: int,
+        arguments: str = None,
+        conf: list[str] = None,
         *args,
         **kwargs,
     ) -> None:
@@ -33,6 +35,8 @@ class YeeduJobRunOperator:
         self.connection_id = connection_id
         self.token_variable_name = token_variable_name
         self.restapi_port = restapi_port
+        self.arguments = arguments
+        self.conf = conf
         self.hook: YeeduHook = YeeduHook(
             conf_id=self.job_conf_id,
             tenant_id=self.tenant_id,
@@ -47,7 +51,11 @@ class YeeduJobRunOperator:
         try:
             self.hook.yeedu_login(context)
             logger.info("Job Config Id: %s", self.job_conf_id)
-            job_id = self.hook.submit_job(self.job_conf_id)
+            job_id = self.hook.submit_job(
+                self.job_conf_id,
+                arguments=self.arguments,
+                conf=self.conf
+            )
             restapi_port = self.restapi_port
 
             logger.info("Job Submited (Job Id: %s)", job_id)
