@@ -66,29 +66,33 @@ class YeeduNotebookRunOperator:
             post_url = self.base_url + \
                 f"workspace/{self.workspace_id}/notebook"
             data = {"notebook_conf_id": self.notebook_conf_id}
-            post_response = self.hook._api_request("POST", post_url, data)
-            status_code = post_response.status_code
-            logger.info(f"Create Notebook - POST Status Code: {status_code}")
-            logger.debug(
-                f"Create Notebook - POST Response: {post_response.json()}")
-            restapi_port = self.restapi_port
+
+            response = self.hook._api_request("POST", post_url, data)
+
+            status_code = response.status_code
+
+            logger.debug(f"Create Notebook - Status Code: {status_code}")
+
             if status_code == 200:
-                self.notebook_id = post_response.json().get("notebook_id")
+                logger.debug(f"Create Notebook - Response: {response.json()}")
+
+                self.notebook_id = response.json().get("notebook_id")
+
                 notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{self.notebook_id}/run-metrics?type=notebook".replace(
-                    f":{restapi_port}/api/v1", ""
+                    f":{self.restapi_port}/api/v1", ""
                 )
                 logger.info(
                     "Check Yeedu notebook run status and logs here " + notebook_run_url
                 )
                 self.get_active_notebook_instances()
-                self.wait_for_kernel_status(self.notebook_id)
+                self.wait_for_kernel_status()
                 self.get_websocket_token()
                 return
             else:
-                raise Exception(post_response.text)
+                raise Exception(response.text)
         except Exception as e:
             logger.error(
-                f"An error occurred during create_notebook_instance: {e}")
+                f"An error occurred during create notebook instance: {e}")
             raise e
 
     def check_notebook_instance_status(self):
@@ -97,24 +101,23 @@ class YeeduNotebookRunOperator:
                 self.base_url
                 + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}"
             )
+
             logger.debug(
-                f"Checking notebook_instance status of : {self.notebook_id}")
+                f"Checking notebook instance status of notebook id: {self.notebook_id}")
+
             status = None
+
             notebook_status_response = self.hook._api_request(
                 "GET", url=check_notebook_status_url
             )
-            logger.debug(
-                f"Notebook_instance GET status response: {notebook_status_response.status_code}"
-            )
+
             if notebook_status_response.status_code == 200:
                 status = notebook_status_response.json().get("notebook_status")
-                logger.info(f"notebook_status: {status}")
-                if status == "STOPPED":
-                    logger.info("Notebook is stopped.")
+                logger.debug(f"Notebook instance status: {status}")
                 return status
             else:
                 raise Exception(
-                    f"Failed to get notebook status. Status code: {notebook_status_response.status_code}"
+                    f"Failed to get notebook instance status received status code: {notebook_status_response.status_code}"
                 )
         except Exception as e:
             logger.error(
@@ -140,11 +143,11 @@ class YeeduNotebookRunOperator:
                     response = self.hook.session.get(
                         url, headers=self.hook.get_headers(), params=get_params)
                     status_code = response.status_code
-                    logger.info(
-                        f"Get Active Notebooks - GET Status Code: {status_code}")
-                    logger.info(
-                        f"Get Active Notebooks - GET Response: {response.json()}")
+                    logger.debug(
+                        f"Get Active Notebooks - Status Code: {status_code}")
                     if status_code == 200:
+                        logger.debug(
+                            f"Get Active Notebooks - Response: {response.json()}")
                         return response.json()['data'][0]['notebook_id']
                     if status_code == 404:
                         logger.info(
@@ -191,11 +194,11 @@ class YeeduNotebookRunOperator:
                 f"An error occurred during get_active_notebook_instances: {str(e)}")
             raise e
 
-    def wait_for_kernel_status(self, notebook_id):
+    def wait_for_kernel_status(self):
         try:
             kernel_url = (
                 self.base_url
-                + f"workspace/{self.workspace_id}/notebook/{notebook_id}/kernel/startOrGetStatus"
+                + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/startOrGetStatus"
             )
             max_retries = 3
             logger.info("Notebook is starting. Please wait....")
@@ -278,12 +281,9 @@ class YeeduNotebookRunOperator:
                     "spark_job_type", {}).get("language")
                 return notebook_file_id, notebook_language
             else:
-                logger.warning(
-                    f"Failed to get notebook configuration. Status code: {notebook_conf_response.status_code} message: {notebook_conf_response.text}"
-                )
-                raise Exception(
-                    f"Failed to get notebook configuration. Status code: {notebook_conf_response.status_code} message: {notebook_conf_response.text}"
-                )
+                error_msg = f"Failed to get notebook configuration. Status code: {notebook_conf_response.status_code} message: {notebook_conf_response.text}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
         except Exception as e:
             logger.error(
                 f"An error occurred while getting notebook configuration: {e}")
@@ -307,15 +307,12 @@ class YeeduNotebookRunOperator:
                     notebook_download_response.text)
                 return notebook_download_response_json
             else:
-                logger.warning(
-                    f"Failed to get notebook configuration. Status code: {notebook_download_response.status_code} message: {notebook_download_response.text}"
-                )
-                raise Exception(
-                    f"Failed to get notebook configuration. Status code: {notebook_download_response.status_code} message: {notebook_download_response.text}"
-                )
+                error_msg = f"Failed to download notebook file. Status code: {notebook_download_response.status_code} message: {notebook_download_response.text}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
         except Exception as e:
             logger.error(
-                f"An error occurred while getting notebook configuration: {e}")
+                f"An error occurred while downloading notebook file: {e}")
             raise e
 
     def stop_notebook(self):
@@ -329,12 +326,11 @@ class YeeduNotebookRunOperator:
             notebook_stop_response = self.hook._api_request(
                 "POST", stop_notebook_url)
             logger.info(
-                f"Stop Notebook - POST Response Status: {notebook_stop_response.status_code}"
-            )
-            logger.debug(
-                f"Stop Notebook - POST Response: {notebook_stop_response.json()}"
+                f"Stop Notebook - Response Status code: {notebook_stop_response.status_code}"
             )
             if notebook_stop_response.status_code == 201:
+                logger.debug(
+                    f"Stop Notebook - Response: {notebook_stop_response.json()}")
                 time.sleep(20)
                 if self.check_notebook_instance_status() == "STOPPED":
                     logger.info(
@@ -354,17 +350,25 @@ class YeeduNotebookRunOperator:
 
     def calculate_cell_run_time(self, start_time: str, end_time: str) -> str:
         try:
+            if not start_time or not end_time:
+                logger.warning("Start time or end time is None or empty.")
+                return ""
+
             start_dt = datetime.fromisoformat(
                 start_time.replace("Z", "+00:00"))
             end_dt = datetime.fromisoformat(end_time.replace("Z", "+00:00"))
+
             duration = end_dt - start_dt
             total_seconds = duration.total_seconds()
+
             if total_seconds < 0:
                 return ''
+
             hours = int(total_seconds // 3600)
             minutes = int((total_seconds % 3600) // 60)
             seconds = int(total_seconds % 60)
             milliseconds = int((total_seconds - int(total_seconds)) * 1000)
+
             if hours >= 1:
                 return f"{hours}h {minutes}m {seconds}s"
             elif minutes >= 1:
@@ -376,7 +380,7 @@ class YeeduNotebookRunOperator:
             else:
                 return ''
         except Exception as e:
-            logger.warning(f"Failed to calculate duration: {e}")
+            logger.error(f"Failed to calculate duration: {e}")
             return ""
 
     def update_notebook_cells(self):
@@ -388,14 +392,15 @@ class YeeduNotebookRunOperator:
                         msg_id_to_update, {})
                     start_time = timing_info.get("startTime")
                     end_time = timing_info.get("endTime")
+                    run_time = self.calculate_cell_run_time(
+                        start_time, end_time)
                     logger.info(
-                        f"CellRunTime: {self.calculate_cell_run_time(start_time, end_time)}")
+                        f"Cell execution time for message id ({msg_id_to_update}) : {run_time}")
                     if start_time:
                         cell["metadata"]["startTime"] = start_time
                     if end_time:
                         cell["metadata"]["endTime"] = end_time
-                    cell["metadata"]["lastRunTime"] = self.calculate_cell_run_time(
-                        start_time, end_time)
+                    cell["metadata"]["lastRunTime"] = run_time
                     cell["outputs"] = copy.deepcopy(self.cell_output_data)
                     self.cell_output_data.clear()
             for cell in self.notebook_json["cells"]:
@@ -408,10 +413,10 @@ class YeeduNotebookRunOperator:
             update_cells_response = self.hook._api_request(
                 "POST", update_cell_url, self.notebook_json
             )
+
             logger.info(
                 f"Notebook update response status: {update_cells_response.status_code}")
-            logger.debug(
-                f"Notebook update response body: {update_cells_response.json()}")
+
             if update_cells_response.status_code == 201:
                 logger.info("Notebook cells updated successfully.")
                 return update_cells_response
@@ -428,11 +433,11 @@ class YeeduNotebookRunOperator:
         try:
             if self.notebook_executed:
                 return 0
-            logger.info(f"Clearing the notebook cells")
+            logger.info(f"Notebook exited. Reason: {exit_reason}")
             self.notebook_cells.clear()
             self.stop_notebook()
         except Exception as e:
-            logger.error(f"Error while exiting notebook: {e}")
+            logger.error(f"Failed to exit notebook: {e}")
             raise e
 
     def set_execution_count(self, msg_id):
@@ -446,14 +451,25 @@ class YeeduNotebookRunOperator:
             logger.error(
                 f"Failed to set executionCount for cell {msg_id}: {e}")
 
+    def format_error_output(self, traceback):
+        """Helper function to format error output as a single string"""
+        error_parts = []
+        if traceback:
+            error_parts.extend(traceback)
+        return "\n".join(error_parts)
+
     def on_message(self, ws, message):
         try:
             response = json.loads(message)
             msg_type = response.get("msg_type", "")
+            msg_id = response["parent_header"]["msg_id"]
+            logger.debug(f"Response content: {response}")
+            logger.info(
+                f"Received message of type: {msg_type} with message id: ({msg_id})")
             if msg_type == "execute_result":
                 content = response.get("content", {})
-                msg_id = response["parent_header"]["msg_id"]
-                logger.debug(f"content: {content}")
+                logger.debug(
+                    f"Execute result content of message id: ({msg_id}) - {content}")
                 plain_data = content.get("data", {}).get("text/plain", "")
                 html_data = content.get("data", {}).get("text/html", "")
                 image_data = content.get("data", {}).get("image/png")
@@ -473,32 +489,49 @@ class YeeduNotebookRunOperator:
                     })
                 if image_data:
                     image_resp_url = f"data:image/png;base64,{image_data}"
-                    self.cell_output_data.append(
-                        {
-                            "msg_id": msg_id,
-                            "output_type": "image",
-                            "Celloutput": image_resp_url,
-                        }
-                    )
+                    self.cell_output_data.append({
+                        "msg_id": msg_id,
+                        "output_type": "image",
+                        "Celloutput": image_resp_url,
+                    })
             elif msg_type == "error":
                 content = response.get("content", {})
-                error_name = content.get("ename", "")
+                self.error_name = content.get("ename", "")
                 self.error_value = content.get("evalue", "")
                 traceback = content.get("traceback", [])
-                logger.error(f"Error: {error_name} - {self.error_value}")
+                self.notebook_executed = False
+
+                # Add error output to cell_output_data
+                self.cell_output_data.append({
+                    "msg_id": msg_id,
+                    "output_type": "error",
+                    "Celloutput": self.format_error_output(traceback)
+                })
+
+                logger.error(
+                    f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
                 logger.error("Traceback:")
                 for tb in traceback:
                     logger.error(tb)
+
+                if self.cell_output_data:
+                    self.update_notebook_cells()
+
+                self.exit_notebook(
+                    f"Exiting due to 'error' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
+                )
+
             elif msg_type == "execute_input":
-                logger.debug(response)
                 content = response.get("content", {})
                 code_input = content.get("code", "")
-                logger.debug(f"Execute Input:\n{code_input}")
+                logger.debug(
+                    f"Started code cell execution for message id ({msg_id}):\n{code_input}")
             elif msg_type == "stream":
                 content = response.get("content", {})
                 text_value = content.get("text", "")
                 msg_id = response["parent_header"]["msg_id"]
-                logger.debug(f"this msg_id is in stream {msg_id}")
+                logger.debug(
+                    f"Stream for message id ({msg_id})")
                 self.cell_output_data.append({
                     "msg_id": msg_id,
                     "output_type": "text",
@@ -507,7 +540,6 @@ class YeeduNotebookRunOperator:
             elif msg_type == "display_data":
                 content = response.get("content", {})
                 logger.debug(f"Display Data: {content}")
-                msg_id = response["parent_header"]["msg_id"]
                 img_resp = response.get("content", {}).get(
                     "data", {}).get("image/png")
                 text_resp = (
@@ -530,7 +562,6 @@ class YeeduNotebookRunOperator:
             elif msg_type == "status":
                 execution_state = response.get(
                     "content", {}).get("execution_state", "")
-                msg_id = response["parent_header"]["msg_id"]
                 if execution_state == "idle" and msg_id:
                     end_time = datetime.now(timezone.utc).isoformat(
                         timespec='milliseconds').replace('+00:00', 'Z')
@@ -540,62 +571,76 @@ class YeeduNotebookRunOperator:
                     self.update_notebook_cells()
             elif msg_type == "execute_reply":
                 content = response.get("content", {})
-                logger.debug(f"Content {content}")
                 self.content_status = content.get("status", "")
                 self.content_ename = content.get("ename", "")
-                logger.debug(self.content_status)
-                msg_id = response["parent_header"]["msg_id"]
-                logger.info(f"Message Id: {msg_id}")
+                logger.debug(
+                    f"Execute reply content for message id ({msg_id}) : {content}")
                 if self.content_status == "ok":
                     try:
                         self.executionCount += 1
                         self.set_execution_count(msg_id)
-                        logger.debug("Removing notebook cells ...")
+                        logger.debug(
+                            "Cell execution successful, removing from queue")
                         self.notebook_cells = [
                             cell
                             for cell in self.notebook_cells
                             if cell.get("msg_id") != msg_id
                         ]
                         logger.debug(
-                            f"Notebook cells array after removing {msg_id}: {self.notebook_cells}"
+                            f"Notebook cells array length after removing cell with message id ({msg_id}): {len(self.notebook_cells)}"
                         )
                     except ValueError:
                         pass
                 elif self.content_status == "error":
+                    self.error_name = content.get("ename", "")
                     self.error_value = content.get("evalue", "")
                     traceback = content.get("traceback", [])
-                    logger.info(traceback)
                     self.notebook_executed = False
+                    # Add error output to cell_output_data
+                    self.cell_output_data.append({
+                        "msg_id": msg_id,
+                        "output_type": "error",
+                        "Celloutput": self.format_error_output(
+                            self.error_name, self.error_value, traceback)
+                    })
+
+                    logger.error(
+                        f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
+                    logger.error("Traceback: ")
+                    for tb in traceback:
+                        logger.error(tb)
+
+                    if self.cell_output_data:
+                        self.update_notebook_cells()
+
                     self.exit_notebook(
-                        f"cell with message_id: {msg_id} failed with error: {self.error_value}"
+                        f"Exiting due to 'error' status in 'execute_reply' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
                     )
+
+                elif self.content_status == "aborted":
+                    logger.warning(
+                        f"Cell execution was aborted for message id ({msg_id})")
+                    self.notebook_executed = False
                 else:
                     raise Exception(
                         f"Invalid self.content_status: {self.content_status}"
                     )
+
         except Exception as e:
-            logger.error(f"Unsupported message type: {e}")
-            if self.check_notebook_instance_status() not in [
-                "STOPPED",
-                "TERMINATED",
-                "ERROR",
-            ]:
-                self.exit_notebook(f"Unsupported message_type: {e}")
+            logger.error(f"Unsupported message type encountered: {e}")
+
+            if self.check_notebook_instance_status() not in ["STOPPED", "TERMINATED", "ERROR"]:
+                self.exit_notebook(
+                    f"Exiting due to unsupported message type: {e}")
+
             raise e
 
     def on_error(self, ws, error):
-        try:
-            logger.info(f"WebSocket encountered an error: {error}")
-        except Exception as e:
-            logger.error(e)
-            raise e
+        logger.info(f"WebSocket encountered an error: {error}")
 
     def on_close(self, ws, close_status_code, close_msg):
-        try:
-            logger.info(f"WebSocket closed {close_status_code} {close_msg}")
-        except Exception as e:
-            logger.error(e)
-            raise e
+        logger.info(
+            f"WebSocket closed with status code: {close_status_code} and message: {close_msg}")
 
     def on_open(self, ws):
         logger.info("WebSocket opened")
@@ -647,7 +692,7 @@ class YeeduNotebookRunOperator:
             def test_on_error(ws, error):
                 nonlocal error_message
                 error_message = str(error)
-                logger.warning(
+                logger.error(
                     f"WebSocket test connection error on attempt {attempt}: {error}")
                 connection_event.set()
 
@@ -813,63 +858,94 @@ class YeeduNotebookRunOperator:
             self.ws = self.connect_websocket()
             rel.dispatch()
             time.sleep(5)
+
             notebook_file_id, notebook_language = self.get_notebook_file_id()
+
             notebook_download_response = self.get_notebook_code_from_file(
                 notebook_file_id)
+
             self.notebook_json = notebook_download_response
-            self.notebook_cells = (
-                notebook_download_response.get("cells", [])
-            )
+            self.notebook_cells = notebook_download_response.get("cells", [])
             self.cells_info = copy.deepcopy(self.notebook_cells)
+
             for cell in self.cells_info:
                 cell.update({"outputs": []})
+
             session_id = str(uuid.uuid4())
-            for cell in self.notebook_cells:
-                code = cell.get("source")
+
+            logger.debug(
+                f"Starting execution of {len(self.notebook_cells)} cells")
+
+            for i, cell in enumerate(self.notebook_cells):
+
+                code = cell.get("source", "")
                 msg_id = cell.get("cell_uuid")
+
+                if not code.strip():
+                    logger.debug(
+                        f"Skipping execution request for empty cell {i+1}/{len(self.notebook_cells)} (message id: {msg_id})")
+                    continue
+
+                logger.debug(
+                    f"Sending execution request for cell {i+1}/{len(self.notebook_cells)} (message id: {msg_id})")
+
                 if notebook_language.upper() == "SQL":
                     code = f"%%sql\n{code}"
+
                 self.send_execute_request(self.ws, code, session_id, msg_id)
                 cell["msg_id"] = msg_id
+
             while len(self.notebook_cells) > 0:
+
+                if not self.notebook_executed:
+                    logger.error(
+                        "Cell execution failed, stopping execution")
+                    break
+
                 time.sleep(10)
+
                 logger.info(
-                    "Waiting {} cells to finish".format(
-                        len(self.notebook_cells))
-                )
+                    f"Waiting for {len(self.notebook_cells)} cell(s) to finish execution.")
+
                 notebook_status = self.check_notebook_instance_status()
-                if len(self.notebook_cells) != 0 and (
-                    notebook_status == "STOPPED"
-                    or not (self.ws and self.ws.sock and self.ws.sock.connected)
-                ):
+
+                ws_connected = self.ws and self.ws.sock and self.ws.sock.connected
+
+                if len(self.notebook_cells) != 0 and (notebook_status == "STOPPED" or not ws_connected):
                     self.notebook_executed = False
                     raise AirflowException(
                         "Connection is lost without executing all the cells. please check logs for more details"
                     )
-                if notebook_status in ["TERMINATED", "STOPPED", "ERROR"]:
+
+                if notebook_status in ["STOPPED", "TERMINATED", "ERROR"]:
                     self.notebook_executed = False
                     break
-            logger.info(f"notebook_executed: {self.notebook_executed}")
+
+            logger.debug(f"notebook executed: {self.notebook_executed}")
+
             if self.notebook_executed:
                 time.sleep(5)
                 self.stop_notebook()
                 return 0
-            else:
-                if self.check_notebook_instance_status() not in [
-                    "STOPPED",
-                    "TERMINATED",
-                    "ERROR",
-                ]:
-                    logger.debug("Exiting notebook from main function")
-                    self.exit_notebook(f"Exiting notebook from main function")
+            elif self.check_notebook_instance_status() not in ["STOPPED", "TERMINATED", "ERROR"]:
+                logger.debug("Exiting notebook due to cell execution failure.")
+                self.exit_notebook(
+                    f"Cell execution failed with error: {self.error_name} - {self.error_value}"
+                )
+
             self.close_websocket_connection()
-            if self.content_status == "error":
+
+            if self.content_status == "error" or self.notebook_executed is False:
                 # Kept to catch the error raised from dbutils.notebook.exit()
                 if self.content_ename is not None and self.content_ename == "CleanExit":
                     logger.info(
                         f"Notebook execution completed with no errors.")
                 else:
-                    raise AirflowException(f"{self.error_value}")
+                    raise AirflowException(
+                        f"{self.error_name} - {self.error_value}")
+
+            notebook_status = self.check_notebook_instance_status()
+
             if notebook_status in ["TERMINATED", "ERROR"]:
                 notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{self.notebook_id}/run-logs?log_type=stderr".replace(
                     f":{self.restapi_port}/api/v1", ""
@@ -877,12 +953,13 @@ class YeeduNotebookRunOperator:
                 raise AirflowException(
                     f"Notebook is in {notebook_status} state. \n Please check notebook logs for detailed error:{notebook_run_url}"
                 )
+
         except Exception as e:
             logger.error(f"Notebook execution failed with error:  {e}")
             raise e
         finally:
             self.close_websocket_connection()
-            logger.info("Closing the websocket connection in finally block")
+            logger.info("WebSocket connection closed in finally block.")
             if self.notebook_id is not None:
                 self.notebook_executed = False
                 if self.check_notebook_instance_status() not in [
@@ -891,8 +968,8 @@ class YeeduNotebookRunOperator:
                     "ERROR",
                     "STOPPING"
                 ]:
-                    logger.info("Exiting notebook in finally block")
-                    self.exit_notebook(f"Exiting notebook")
+                    logger.info("Exiting notebook from finally block.")
+                    self.exit_notebook(f"Exiting notebook from finally block.")
             # Only logout for LDAP or AAD
             try:
                 auth_type = self.hook.get_auth_type()

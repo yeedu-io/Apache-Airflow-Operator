@@ -174,7 +174,7 @@ class YeeduHook(BaseHook):
                 else:
                     attempts_failure += 1
                     self.log.info(
-                        f"API request failed with status {response.status_code} (attempt {attempts_failure}/{max_attempts})")
+                        f"API request failed with status {response.status_code} and message: {response.text} - (attempt {attempts_failure}/{max_attempts})")
                     self.log.info(
                         f"Sleeping for {delay} seconds before retrying...")
                     time.sleep(delay)
@@ -182,7 +182,7 @@ class YeeduHook(BaseHook):
             except Exception as e:
                 attempts_failure += 1
                 self.log.error(
-                    f"Request failed due to exception: {e} (attempt {attempts_failure}/{max_attempts})")
+                    f"Request failed due to exception: {e} - (attempt {attempts_failure}/{max_attempts})")
                 self.log.info(
                     f"Sleeping for {delay} seconds before retrying...")
                 time.sleep(delay)
@@ -311,8 +311,6 @@ class YeeduHook(BaseHook):
 
             # Make the POST request to associate the tenant
             tenant_associate_response = self._api_request('POST', tenant_url)
-            self.log.info(
-                f"Tenant Association Response: {tenant_associate_response.text}")
 
             if tenant_associate_response.status_code == 201:
                 self.log.info(
