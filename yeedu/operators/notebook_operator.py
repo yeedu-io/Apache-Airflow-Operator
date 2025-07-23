@@ -435,7 +435,8 @@ class YeeduNotebookRunOperator:
                 return 0
             logger.info(f"Notebook exited. Reason: {exit_reason}")
             self.notebook_cells.clear()
-            self.stop_notebook()
+            if self.check_notebook_instance_status() in ["SUBMITTED", "RUNNING"]:
+                self.stop_notebook()
         except Exception as e:
             logger.error(f"Failed to exit notebook: {e}")
             raise e
@@ -499,19 +500,30 @@ class YeeduNotebookRunOperator:
                 self.error_name = content.get("ename", "")
                 self.error_value = content.get("evalue", "")
                 traceback = content.get("traceback", [])
+                logger.debug(
+                    "Setting notebook executed flag to False due to error event.")
                 self.notebook_executed = False
+
+                if traceback:
+                    formatted_error_output = self.format_error_output(
+                        traceback)
+                elif self.error_name == 'CleanExit':
+                    formatted_error_output = ''
+                else:
+                    formatted_error_output = f"{self.error_name}: {self.error_value}"
 
                 # Add error output to cell_output_data
                 self.cell_output_data.append({
                     "msg_id": msg_id,
                     "output_type": "error",
-                    "Celloutput": self.format_error_output(traceback)
+                    "Celloutput": formatted_error_output
                 })
 
                 logger.error(
                     f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
-                logger.error("Traceback:")
+
                 for tb in traceback:
+                    logger.error("Traceback:")
                     logger.error(tb)
 
                 if self.cell_output_data:
@@ -572,7 +584,7 @@ class YeeduNotebookRunOperator:
             elif msg_type == "execute_reply":
                 content = response.get("content", {})
                 self.content_status = content.get("status", "")
-                self.content_ename = content.get("ename", "")
+                self.error_name = content.get("ename", "")
                 logger.debug(
                     f"Execute reply content for message id ({msg_id}) : {content}")
                 if self.content_status == "ok":
@@ -592,22 +604,32 @@ class YeeduNotebookRunOperator:
                     except ValueError:
                         pass
                 elif self.content_status == "error":
-                    self.error_name = content.get("ename", "")
                     self.error_value = content.get("evalue", "")
                     traceback = content.get("traceback", [])
+                    logger.debug(
+                        "Setting notebook executed flag to False due to error status.")
                     self.notebook_executed = False
+
+                    if traceback:
+                        formatted_error_output = self.format_error_output(
+                            traceback)
+                    elif self.error_name == 'CleanExit':
+                        formatted_error_output = ''
+                    else:
+                        formatted_error_output = f"{self.error_name}: {self.error_value}"
+
                     # Add error output to cell_output_data
                     self.cell_output_data.append({
                         "msg_id": msg_id,
                         "output_type": "error",
-                        "Celloutput": self.format_error_output(
-                            self.error_name, self.error_value, traceback)
+                        "Celloutput": formatted_error_output
                     })
 
                     logger.error(
                         f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
-                    logger.error("Traceback: ")
+
                     for tb in traceback:
+                        logger.error("Traceback: ")
                         logger.error(tb)
 
                     if self.cell_output_data:
@@ -620,6 +642,8 @@ class YeeduNotebookRunOperator:
                 elif self.content_status == "aborted":
                     logger.warning(
                         f"Cell execution was aborted for message id ({msg_id})")
+                    logger.debug(
+                        "Setting notebook executed flag to False due to cell abort.")
                     self.notebook_executed = False
                 else:
                     raise Exception(
@@ -628,7 +652,6 @@ class YeeduNotebookRunOperator:
 
         except Exception as e:
             logger.error(f"Unsupported message type encountered: {e}")
-
             if self.check_notebook_instance_status() not in ["STOPPED", "TERMINATED", "ERROR"]:
                 self.exit_notebook(
                     f"Exiting due to unsupported message type: {e}")
@@ -912,12 +935,15 @@ class YeeduNotebookRunOperator:
                 ws_connected = self.ws and self.ws.sock and self.ws.sock.connected
 
                 if len(self.notebook_cells) != 0 and (notebook_status == "STOPPED" or not ws_connected):
+                    logger.debug(
+                        "Setting notebook executed flag to False due to connection loss.")
                     self.notebook_executed = False
                     raise AirflowException(
                         "Connection is lost without executing all the cells. please check logs for more details"
                     )
 
                 if notebook_status in ["STOPPED", "TERMINATED", "ERROR"]:
+                    logger.debug("Setting notebook executed flag to False.")
                     self.notebook_executed = False
                     break
 
@@ -937,9 +963,9 @@ class YeeduNotebookRunOperator:
 
             if self.content_status == "error" or self.notebook_executed is False:
                 # Kept to catch the error raised from dbutils.notebook.exit()
-                if self.content_ename is not None and self.content_ename == "CleanExit":
+                if self.error_name is not None and self.error_name == "CleanExit":
                     logger.info(
-                        f"Notebook execution completed with no errors.")
+                        f"Notebook execution completed with exit message: '{self.error_value}'")
                 else:
                     raise AirflowException(
                         f"{self.error_name} - {self.error_value}")
@@ -961,6 +987,8 @@ class YeeduNotebookRunOperator:
             self.close_websocket_connection()
             logger.info("WebSocket connection closed in finally block.")
             if self.notebook_id is not None:
+                logger.debug(
+                    "Setting notebook executed flag to False in finally block.")
                 self.notebook_executed = False
                 if self.check_notebook_instance_status() not in [
                     "STOPPED",
