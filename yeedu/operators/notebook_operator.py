@@ -904,11 +904,6 @@ class YeeduNotebookRunOperator:
                 code = cell.get("source", "")
                 msg_id = cell.get("cell_uuid")
 
-                if not code.strip():
-                    logger.debug(
-                        f"Skipping execution request for empty cell {i+1}/{len(self.notebook_cells)} (message id: {msg_id})")
-                    continue
-
                 logger.debug(
                     f"Sending execution request for cell {i+1}/{len(self.notebook_cells)} (message id: {msg_id})")
 
