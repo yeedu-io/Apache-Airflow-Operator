@@ -85,7 +85,7 @@ class YeeduNotebookRunOperator:
                     "Check Yeedu notebook run status and logs here " + notebook_run_url
                 )
                 self.get_active_notebook_instances()
-                self.wait_for_kernel_status()
+                self.wait_for_kernel_status(skip_sleep=False)
                 self.get_websocket_token()
                 return
             else:
@@ -194,15 +194,17 @@ class YeeduNotebookRunOperator:
                 f"An error occurred during get_active_notebook_instances: {str(e)}")
             raise e
 
-    def wait_for_kernel_status(self):
+    def wait_for_kernel_status(self, skip_sleep=False):
         try:
             kernel_url = (
                 self.base_url
                 + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/startOrGetStatus"
             )
             max_retries = 3
-            logger.info("Notebook is starting. Please wait....")
-            time.sleep(10)
+            if skip_sleep is False:
+                logger.info("Notebook is starting. Please wait....")
+                time.sleep(10)
+
             for retry in range(1, max_retries + 1):
                 kernel_response = self.hook._api_request("POST", kernel_url)
                 kernel_info = kernel_response.json().get("kernel_info", {})
@@ -467,6 +469,8 @@ class YeeduNotebookRunOperator:
             logger.debug(f"Response content: {response}")
             logger.info(
                 f"Received message of type: {msg_type} with message id: ({msg_id})")
+
+            self.wait_for_kernel_status(skip_sleep=True)
             if msg_type == "execute_result":
                 content = response.get("content", {})
                 logger.debug(
@@ -924,6 +928,11 @@ class YeeduNotebookRunOperator:
 
                 logger.info(
                     f"Waiting for {len(self.notebook_cells)} cell(s) to finish execution.")
+
+                self.wait_for_kernel_status(skip_sleep=True)
+                for cell in self.notebook_cells:
+                    logger.debug(
+                        f'Waiting for this cell id ({cell.get("cell_uuid")}) to finish execution.')
 
                 notebook_status = self.check_notebook_instance_status()
 

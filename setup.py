@@ -10,7 +10,7 @@ def read(*parts):
 
 setup(
     name='airflow-yeedu-operator',
-    version='2.9.0-rc6',
+    version='2.9.0-rc7',
     description='Submission and monitoring of jobs and notebooks using the Yeedu API in Apache Airflow.',
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
