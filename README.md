@@ -1,4 +1,5 @@
 # Airflow Yeedu Operator
+
 [![PyPI version](https://badge.fury.io/py/airflow-yeedu-operator.png)](https://badge.fury.io/py/airflow-yeedu-operator)
 
 > **Note:** This version of `airflow-yeedu-operator` is compatible only with **Apache Airflow 2.x**. Apache Airflow 3.x is **not supported**.

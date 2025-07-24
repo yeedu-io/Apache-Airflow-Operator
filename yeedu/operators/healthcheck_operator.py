@@ -7,6 +7,7 @@ from airflow.utils.decorators import apply_defaults
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
 class YeeduHealthCheckOperator:
     """
     YeeduHealthCheckOperator submits a job to Yeedu and waits for its completion.
@@ -58,6 +59,7 @@ class YeeduHealthCheckOperator:
         """
         try:
             health_check_status: str = self.hook.yeedu_health_check()
-            logger.info("Health Check Status: %s", health_check_status.status_code)
+            logger.info(
+                f"Health Check Status: {health_check_status.status_code}")
         except Exception as e:
             raise AirflowException(e)
