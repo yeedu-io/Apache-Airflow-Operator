@@ -50,7 +50,6 @@ class YeeduNotebookRunOperator:
         self.execution_times = {}
         self.ws = None
         self.executionCount = 0
-        self.num_cells_execution = 0
         self.hook: YeeduHook = YeeduHook(
             conf_id=self.notebook_conf_id,
             tenant_id=self.tenant_id,
@@ -546,9 +545,6 @@ class YeeduNotebookRunOperator:
                 self.error_name = content.get("ename", "")
                 self.error_value = content.get("evalue", "")
                 traceback = content.get("traceback", [])
-                logger.debug(
-                    "Setting notebook executed flag to False due to error event.")
-                self.notebook_executed = False
 
                 if traceback:
                     formatted_error_output = self.format_error_output(
@@ -568,21 +564,17 @@ class YeeduNotebookRunOperator:
                 logger.error(
                     f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
 
-                for tb in traceback:
+                if traceback:
                     logger.error("Traceback:")
-                    logger.error(tb)
-
-                if self.cell_output_data:
-                    self.update_notebook_cells()
-
-                self.exit_notebook(
-                    f"Exiting due to 'error' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
-                )
+                    for tb in traceback:
+                        logger.error(tb)
 
             elif msg_type == "execute_input":
-                self.num_cells_execution += 1
                 content = response.get("content", {})
                 code_input = content.get("code", "")
+                start_time = datetime.now(timezone.utc).isoformat(
+                    timespec='milliseconds').replace('+00:00', 'Z')
+                self.execution_times[msg_id] = {"startTime": start_time}
                 logger.debug(
                     f"Started code cell execution for message id ({msg_id}):\n{code_input}")
 
@@ -631,14 +623,13 @@ class YeeduNotebookRunOperator:
                         msg_id, {})["endTime"] = end_time
                 if self.cell_output_data:
                     self.update_notebook_cells()
-                else:
-                    if self.num_cells_execution > 0:
-                        self.cell_output_data.append({
-                            "msg_id": msg_id,
-                            "output_type": "text",
-                            "Celloutput": ''
-                        })
-                        self.update_notebook_cells()
+                elif response.get("parent_header", {}).get("msg_type", {}) != "kernel_info_request":
+                    self.cell_output_data.append({
+                        "msg_id": msg_id,
+                        "output_type": "text",
+                        "Celloutput": ''
+                    })
+                    self.update_notebook_cells()
 
             elif msg_type == "execute_reply":
                 content = response.get("content", {})
@@ -690,12 +681,17 @@ class YeeduNotebookRunOperator:
                     logger.error(
                         f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
 
-                    for tb in traceback:
+                    if traceback:
                         logger.error("Traceback: ")
-                        logger.error(tb)
+                        for tb in traceback:
+                            logger.error(tb)
 
-                    if self.cell_output_data:
-                        self.update_notebook_cells()
+                    end_time = datetime.now(timezone.utc).isoformat(
+                        timespec='milliseconds').replace('+00:00', 'Z')
+                    self.execution_times.setdefault(
+                        msg_id, {})["endTime"] = end_time
+
+                    self.update_notebook_cells()
 
                     self.exit_notebook(
                         f"Exiting due to 'error' status in 'execute_reply' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
@@ -905,7 +901,6 @@ class YeeduNotebookRunOperator:
         try:
             start_time = datetime.now(timezone.utc).isoformat(
                 timespec='milliseconds').replace('+00:00', 'Z')
-            self.execution_times[msg_id] = {"startTime": start_time}
             execute_request = {
                 "header": {
                     "msg_type": "execute_request",
@@ -931,9 +926,11 @@ class YeeduNotebookRunOperator:
                 "parent_header": {},
                 "channel": "shell",
             }
+
+            execute_request_json = json.dumps(execute_request)
             logger.debug(
-                f"Sending execute request for cell with message id ({msg_id}): {execute_request}")
-            ws.send(json.dumps(execute_request))
+                f"Sending execute request for cell with message id ({msg_id}): {execute_request_json}")
+            ws.send(execute_request_json)
         except Exception as e:
             logger.error(f"Error while sending execute request: {e}")
             raise e
