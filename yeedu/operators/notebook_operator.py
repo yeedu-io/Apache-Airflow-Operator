@@ -47,7 +47,6 @@ class YeeduNotebookRunOperator:
         self.notebook_executed = True
         self.notebook_id = None
         self.cell_output_data = []
-        self.cells_info = {}
         self.execution_times = {}
         self.ws = None
         self.executionCount = 0
@@ -127,8 +126,8 @@ class YeeduNotebookRunOperator:
 
     def get_active_notebook_instances(self):
         TERMINAL_STATES = {"TERMINATED", "STOPPED", "ERROR"}
-        MAX_ATTEMPTS = 5
-        DELAY_SECONDS = 60
+        MAX_ATTEMPTS = 60
+        DELAY_SECONDS = 5
         get_params = {
             "notebook_conf_ids": self.notebook_conf_id,
             "notebook_status": "RUNNING",
@@ -385,6 +384,46 @@ class YeeduNotebookRunOperator:
             logger.error(f"Failed to calculate duration: {e}")
             return ""
 
+    def clear_notebook_cell_outputs(self):
+        try:
+            for cell in self.notebook_json.get("cells", []):
+                # Clear outputs
+                cell["outputs"] = []
+
+                # Clear execution metadata
+                cell_metadata = cell.setdefault("metadata", {})
+                cell_metadata.pop("startTime", None)
+                cell_metadata.pop("endTime", None)
+                cell_metadata.pop("lastRunTime", None)
+                cell["metadata"] = cell_metadata
+
+            logger.info(
+                "Cleared all previous outputs and execution metadata from notebook cells.")
+
+            # Persist the cleared notebook
+            update_cell_url = (
+                f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_conf_id}/update"
+            )
+
+            update_cells_response = self.hook._api_request(
+                "POST", update_cell_url, self.notebook_json
+            )
+
+            logger.info(
+                f"Notebook clear-output update response: {update_cells_response.status_code}")
+
+            if update_cells_response.status_code == 201:
+                logger.info("Notebook cells cleared successfully.")
+            else:
+                raise Exception(
+                    f"Failed to clear notebook cells. Status code: {update_cells_response.status_code}, Message: {update_cells_response.text}"
+                )
+
+        except Exception as e:
+            logger.error(
+                f"An error occurred while clearing notebook cells: {e}")
+            raise
+
     def update_notebook_cells(self):
         try:
             msg_id_to_update = self.cell_output_data[0]["msg_id"]
@@ -471,6 +510,7 @@ class YeeduNotebookRunOperator:
                 f"Received message of type: {msg_type} with message id: ({msg_id})")
 
             self.wait_for_kernel_status(skip_sleep=True)
+
             if msg_type == "execute_result":
                 content = response.get("content", {})
                 logger.debug(
@@ -499,14 +539,12 @@ class YeeduNotebookRunOperator:
                         "output_type": "image",
                         "Celloutput": image_resp_url,
                     })
+
             elif msg_type == "error":
                 content = response.get("content", {})
                 self.error_name = content.get("ename", "")
                 self.error_value = content.get("evalue", "")
                 traceback = content.get("traceback", [])
-                logger.debug(
-                    "Setting notebook executed flag to False due to error event.")
-                self.notebook_executed = False
 
                 if traceback:
                     formatted_error_output = self.format_error_output(
@@ -526,22 +564,20 @@ class YeeduNotebookRunOperator:
                 logger.error(
                     f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
 
-                for tb in traceback:
+                if traceback:
                     logger.error("Traceback:")
-                    logger.error(tb)
-
-                if self.cell_output_data:
-                    self.update_notebook_cells()
-
-                self.exit_notebook(
-                    f"Exiting due to 'error' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
-                )
+                    for tb in traceback:
+                        logger.error(tb)
 
             elif msg_type == "execute_input":
                 content = response.get("content", {})
                 code_input = content.get("code", "")
+                start_time = datetime.now(timezone.utc).isoformat(
+                    timespec='milliseconds').replace('+00:00', 'Z')
+                self.execution_times[msg_id] = {"startTime": start_time}
                 logger.debug(
                     f"Started code cell execution for message id ({msg_id}):\n{code_input}")
+
             elif msg_type == "stream":
                 content = response.get("content", {})
                 text_value = content.get("text", "")
@@ -553,6 +589,7 @@ class YeeduNotebookRunOperator:
                     "output_type": "text",
                     "Celloutput": text_value
                 })
+
             elif msg_type == "display_data":
                 content = response.get("content", {})
                 logger.debug(f"Display Data: {content}")
@@ -575,6 +612,7 @@ class YeeduNotebookRunOperator:
                         "output_type": "text",
                         "Celloutput": text_resp
                     })
+
             elif msg_type == "status":
                 execution_state = response.get(
                     "content", {}).get("execution_state", "")
@@ -585,12 +623,22 @@ class YeeduNotebookRunOperator:
                         msg_id, {})["endTime"] = end_time
                 if self.cell_output_data:
                     self.update_notebook_cells()
+                elif response.get("parent_header", {}).get("msg_type", {}) != "kernel_info_request":
+                    self.cell_output_data.append({
+                        "msg_id": msg_id,
+                        "output_type": "text",
+                        "Celloutput": ''
+                    })
+                    self.update_notebook_cells()
+
             elif msg_type == "execute_reply":
                 content = response.get("content", {})
                 self.content_status = content.get("status", "")
                 self.error_name = content.get("ename", "")
+
                 logger.debug(
                     f"Execute reply content for message id ({msg_id}) : {content}")
+
                 if self.content_status == "ok":
                     try:
                         self.executionCount += 1
@@ -607,6 +655,7 @@ class YeeduNotebookRunOperator:
                         )
                     except ValueError:
                         pass
+
                 elif self.content_status == "error":
                     self.error_value = content.get("evalue", "")
                     traceback = content.get("traceback", [])
@@ -632,12 +681,17 @@ class YeeduNotebookRunOperator:
                     logger.error(
                         f"Error for message id ({msg_id}): {self.error_name} - {self.error_value}")
 
-                    for tb in traceback:
+                    if traceback:
                         logger.error("Traceback: ")
-                        logger.error(tb)
+                        for tb in traceback:
+                            logger.error(tb)
 
-                    if self.cell_output_data:
-                        self.update_notebook_cells()
+                    end_time = datetime.now(timezone.utc).isoformat(
+                        timespec='milliseconds').replace('+00:00', 'Z')
+                    self.execution_times.setdefault(
+                        msg_id, {})["endTime"] = end_time
+
+                    self.update_notebook_cells()
 
                     self.exit_notebook(
                         f"Exiting due to 'error' status in 'execute_reply' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
@@ -649,6 +703,7 @@ class YeeduNotebookRunOperator:
                     logger.debug(
                         "Setting notebook executed flag to False due to cell abort.")
                     self.notebook_executed = False
+
                 else:
                     raise Exception(
                         f"Invalid self.content_status: {self.content_status}"
@@ -846,7 +901,6 @@ class YeeduNotebookRunOperator:
         try:
             start_time = datetime.now(timezone.utc).isoformat(
                 timespec='milliseconds').replace('+00:00', 'Z')
-            self.execution_times[msg_id] = {"startTime": start_time}
             execute_request = {
                 "header": {
                     "msg_type": "execute_request",
@@ -863,12 +917,20 @@ class YeeduNotebookRunOperator:
                     "store_history": True,
                     "user_expressions": {},
                     "allow_stdin": False,
+                    # A boolean flag, which, if True, aborts the execution queue if an exception is encountered.
+                    # If False, queued execute_requests will execute even if this request generates an exception.
+                    # Reference Link: https://jupyter-client.readthedocs.io/en/stable/messaging.html#execute
+                    "stop_on_error": True,
                 },
                 "buffers": [],
                 "parent_header": {},
                 "channel": "shell",
             }
-            ws.send(json.dumps(execute_request))
+
+            execute_request_json = json.dumps(execute_request)
+            logger.debug(
+                f"Sending execute request for cell with message id ({msg_id}): {execute_request_json}")
+            ws.send(execute_request_json)
         except Exception as e:
             logger.error(f"Error while sending execute request: {e}")
             raise e
@@ -893,10 +955,8 @@ class YeeduNotebookRunOperator:
 
             self.notebook_json = notebook_download_response
             self.notebook_cells = notebook_download_response.get("cells", [])
-            self.cells_info = copy.deepcopy(self.notebook_cells)
 
-            for cell in self.cells_info:
-                cell.update({"outputs": []})
+            self.clear_notebook_cell_outputs()
 
             session_id = str(uuid.uuid4())
 
