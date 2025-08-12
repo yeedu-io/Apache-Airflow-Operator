@@ -27,7 +27,7 @@ class YeeduNotebookRunOperator:
         self,
         base_url,
         workspace_id,
-        notebook_conf_id,
+        notebook_id,
         tenant_id,
         connection_id,
         token_variable_name,
@@ -38,20 +38,20 @@ class YeeduNotebookRunOperator:
         super().__init__(*args, **kwargs)
         self.base_url = base_url
         self.workspace_id = workspace_id
-        self.notebook_conf_id = notebook_conf_id
+        self.notebook_id = notebook_id
         self.tenant_id = tenant_id
         self.connection_id = connection_id
         self.token_variable_name = token_variable_name
         self.restapi_port = restapi_port
         self.notebook_cells = {}
         self.notebook_executed = True
-        self.notebook_id = None
+        self.run_id = None
         self.cell_output_data = []
         self.execution_times = {}
         self.ws = None
         self.executionCount = 0
         self.hook: YeeduHook = YeeduHook(
-            conf_id=self.notebook_conf_id,
+            conf_id=self.notebook_id,
             tenant_id=self.tenant_id,
             base_url=self.base_url,
             workspace_id=self.workspace_id,
@@ -63,10 +63,11 @@ class YeeduNotebookRunOperator:
     def create_notebook_instance(self):
         try:
             post_url = self.base_url + \
-                f"workspace/{self.workspace_id}/notebook"
-            data = {"notebook_conf_id": self.notebook_conf_id}
+                f'workspace/{self.workspace_id}/notebook/run'
+            data = {'notebook_id': self.notebook_id}
 
             response = self.hook._api_request("POST", post_url, data)
+            logger.debug(f"Create Notebook - Response: {response.text}")
 
             status_code = response.status_code
 
@@ -75,9 +76,9 @@ class YeeduNotebookRunOperator:
             if status_code == 200:
                 logger.debug(f"Create Notebook - Response: {response.json()}")
 
-                self.notebook_id = response.json().get("notebook_id")
+                self.run_id = response.json().get("run_id")
 
-                notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{self.notebook_id}/run-metrics?type=notebook".replace(
+                notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{self.run_id}/run-metrics?type=notebook".replace(
                     f":{self.restapi_port}/api/v1", ""
                 )
                 logger.info(
@@ -98,11 +99,11 @@ class YeeduNotebookRunOperator:
         try:
             check_notebook_status_url = (
                 self.base_url
-                + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}"
+                + f"workspace/{self.workspace_id}/notebook/run/{self.run_id}"
             )
 
             logger.debug(
-                f"Checking notebook instance status of notebook id: {self.notebook_id}")
+                f"Checking notebook instance status of notebook id: {self.run_id}")
 
             status = None
 
@@ -111,7 +112,7 @@ class YeeduNotebookRunOperator:
             )
 
             if notebook_status_response.status_code == 200:
-                status = notebook_status_response.json().get("notebook_status")
+                status = notebook_status_response.json().get("run_status")
                 logger.debug(f"Notebook instance status: {status}")
                 return status
             else:
@@ -129,11 +130,11 @@ class YeeduNotebookRunOperator:
         MAX_ATTEMPTS = 60
         DELAY_SECONDS = 5
         get_params = {
-            "notebook_conf_ids": self.notebook_conf_id,
-            "notebook_status": "RUNNING",
+            "notebook_ids": self.notebook_id,
+            "run_status": "RUNNING",
             "isActive": "true"
         }
-        url = f"{self.base_url}workspace/{self.workspace_id}/notebooks"
+        url = f"{self.base_url}workspace/{self.workspace_id}/notebook/runs"
         attempts_failure = 0
         try:
             while True:
@@ -147,7 +148,7 @@ class YeeduNotebookRunOperator:
                     if status_code == 200:
                         logger.debug(
                             f"Get Active Notebooks - Response: {response.json()}")
-                        return response.json()['data'][0]['notebook_id']
+                        return response.json()['data'][0]['run_id']
                     if status_code == 404:
                         logger.info(
                             f"Notebook is not yet running. Retrying after {DELAY_SECONDS} seconds...")
@@ -156,7 +157,7 @@ class YeeduNotebookRunOperator:
                         if notebook_status in TERMINAL_STATES:
                             notebook_run_url = (
                                 f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}"
-                                f"/spark/{self.notebook_id}/run-logs?log_type=stderr"
+                                f"/spark/run/{self.run_id}/run-logs?log_type=stderr"
                             ).replace(f":{self.restapi_port}/api/v1", "")
                             raise AirflowException(
                                 f"Notebook is in {notebook_status} state.\n"
@@ -197,7 +198,7 @@ class YeeduNotebookRunOperator:
         try:
             kernel_url = (
                 self.base_url
-                + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/startOrGetStatus"
+                + f"workspace/{self.workspace_id}/notebook/run/{self.run_id}/kernel/startOrGetStatus"
             )
             max_retries = 3
             if skip_sleep is False:
@@ -240,7 +241,7 @@ class YeeduNotebookRunOperator:
             token = self.hook.get_headers().get("Authorization").split(" ")[1]
             proxy_url = (
                 self.base_url
-                + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/ws"
+                + f"workspace/{self.workspace_id}/notebook/run/{self.run_id}/kernel/ws"
             )
             proxy_response = self.hook._api_request(
                 "GET",
@@ -252,7 +253,7 @@ class YeeduNotebookRunOperator:
                     f"WebSocket Token Response: {proxy_response.json()}")
                 websocket_url = (
                     self.base_url
-                    + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/kernel/ws/yeedu_session/{token}"
+                    + f"workspace/{self.workspace_id}/notebook/run/{self.run_id}/kernel/ws/yeedu_session/{token}"
                 )
                 websocket_url = websocket_url.replace("http://", "ws://").replace(
                     "https://", "wss://"
@@ -269,12 +270,12 @@ class YeeduNotebookRunOperator:
     def get_notebook_file_id(self):
         try:
             get_notebook_url = (
-                self.base_url + f"workspace/{self.workspace_id}/notebook/conf"
+                self.base_url + f"workspace/{self.workspace_id}/notebook"
             )
             notebook_conf_response = self.hook._api_request(
                 "GET",
                 get_notebook_url,
-                params={"notebook_conf_id": self.notebook_conf_id},
+                params={"notebook_id": self.notebook_id},
             )
             if notebook_conf_response.status_code == 200:
                 notebook_file_id = notebook_conf_response.json().get("notebook_file_id")
@@ -321,9 +322,9 @@ class YeeduNotebookRunOperator:
             self.close_websocket_connection()
             stop_notebook_url = (
                 self.base_url
-                + f"workspace/{self.workspace_id}/notebook/kill/{self.notebook_id}"
+                + f"workspace/{self.workspace_id}/notebook/run/kill/{self.run_id}"
             )
-            logger.debug(f"Stopping notebook instance id: {self.notebook_id}")
+            logger.debug(f"Stopping notebook instance id: {self.run_id}")
             notebook_stop_response = self.hook._api_request(
                 "POST", stop_notebook_url)
             logger.info(
@@ -335,7 +336,7 @@ class YeeduNotebookRunOperator:
                 time.sleep(20)
                 if self.check_notebook_instance_status() == "STOPPED":
                     logger.info(
-                        f"Notebook instance id: {self.notebook_id} stopped successfully."
+                        f"Notebook instance id: {self.run_id} stopped successfully."
                     )
                 return notebook_stop_response
             else:
@@ -402,7 +403,7 @@ class YeeduNotebookRunOperator:
 
             # Persist the cleared notebook
             update_cell_url = (
-                f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_conf_id}/update"
+                f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_id}/update"
             )
 
             update_cells_response = self.hook._api_request(
@@ -449,7 +450,7 @@ class YeeduNotebookRunOperator:
                     output.pop("msg_id", None)
                     output.setdefault("output_type", "text")
             update_cell_url = (
-                f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_conf_id}/update"
+                f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_id}/update"
             )
             update_cells_response = self.hook._api_request(
                 "POST", update_cell_url, self.notebook_json
@@ -1037,7 +1038,7 @@ class YeeduNotebookRunOperator:
             notebook_status = self.check_notebook_instance_status()
 
             if notebook_status in ["TERMINATED", "ERROR"]:
-                notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{self.notebook_id}/run-logs?log_type=stderr".replace(
+                notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/run/{self.run_id}/run-logs?log_type=stderr".replace(
                     f":{self.restapi_port}/api/v1", ""
                 )
                 raise AirflowException(
@@ -1050,7 +1051,7 @@ class YeeduNotebookRunOperator:
         finally:
             self.close_websocket_connection()
             logger.info("WebSocket connection closed in finally block.")
-            if self.notebook_id is not None:
+            if self.run_id is not None:
                 logger.debug(
                     "Setting notebook executed flag to False in finally block.")
                 self.notebook_executed = False
