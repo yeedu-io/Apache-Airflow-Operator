@@ -14,9 +14,10 @@ from airflow.timetables.base import Timetable, DagRunInfo, DataInterval, TimeRes
 
 LOGGER = logging.getLogger(__name__)
 
+
 @dataclass(frozen=True)
 class QuartzTimetable(Timetable):
-    
+
     cron_expression: str
     tz: str = "Asia/Kolkata"
 
@@ -26,13 +27,13 @@ class QuartzTimetable(Timetable):
     @property
     def summary(self) -> str:
         return self.cron_expression
-    
+
     @property
     def description(self) -> str:
         return get_description(self.cron_expression)
-    
+
     def infer_manual_data_interval(self, run_after: DateTime) -> DataInterval:
-        
+
         anchor = run_after.in_timezone(self.tz)
         # Look for the next valid start after one second before the trigger.
         # This allows a manual trigger that lands exactly on a scheduled run to
@@ -63,7 +64,8 @@ class QuartzTimetable(Timetable):
 
         if last_automated_data_interval is None:
             # Pick a FIXED anchor (don’t recompute from moving "now" on every call)
-            anchor = restriction.earliest.in_timezone(tz) if restriction.earliest else now
+            anchor = restriction.earliest.in_timezone(
+                tz) if restriction.earliest else now
 
             # With catchup disabled, don't start before "now"
             if not restriction.catchup and anchor < now:
@@ -91,7 +93,6 @@ class QuartzTimetable(Timetable):
 
         # Normal cadence (1-minute data interval)
         return DagRunInfo.interval(start=next_start, end=next_start.add(minutes=1))
-
 
     def serialize(self) -> Dict[str, Any]:
         """Serialize the timetable's configuration for persistence."""
@@ -153,13 +154,16 @@ class QuartzTimetable(Timetable):
                     elif '-' in base:
                         try:
                             start_str, end_str = base.split('-', 1)
-                            start = int(names_map.get(start_str, start_str)) if names_map else int(start_str)
-                            end = int(names_map.get(end_str, end_str)) if names_map else int(end_str)
+                            start = int(names_map.get(
+                                start_str, start_str)) if names_map else int(start_str)
+                            end = int(names_map.get(end_str, end_str)
+                                      ) if names_map else int(end_str)
                         except Exception:
                             continue
                     else:
                         try:
-                            start = int(names_map.get(base, base)) if names_map else int(base)
+                            start = int(names_map.get(base, base)
+                                        ) if names_map else int(base)
                         except Exception:
                             continue
                         end = max_val
@@ -177,22 +181,26 @@ class QuartzTimetable(Timetable):
                     a_str = a_str.strip()
                     b_str = b_str.strip()
                     try:
-                        a_val = int(names_map.get(a_str, a_str)) if names_map else int(a_str)
-                        b_val = int(names_map.get(b_str, b_str)) if names_map else int(b_str)
+                        a_val = int(names_map.get(a_str, a_str)
+                                    ) if names_map else int(a_str)
+                        b_val = int(names_map.get(b_str, b_str)
+                                    ) if names_map else int(b_str)
                     except Exception:
                         continue
                     # If the range wraps around, include the wrap-around portion
                     if a_val <= b_val:
                         seq = range(a_val, b_val + 1)
                     else:
-                        seq = list(range(a_val, max_val + 1)) + list(range(min_val, b_val + 1))
+                        seq = list(range(a_val, max_val + 1)) + \
+                            list(range(min_val, b_val + 1))
                     for v in seq:
                         if min_val <= v <= max_val:
                             values.add(v)
                     continue
                 # Single numeric or named value
                 try:
-                    val_str = names_map.get(segment, segment) if names_map else segment
+                    val_str = names_map.get(
+                        segment, segment) if names_map else segment
                     v = int(val_str)
                 except Exception:
                     continue
@@ -287,9 +295,10 @@ class QuartzTimetable(Timetable):
                         continue
                     # Convert to Python weekday (Mon=0 … Sun=6)
                     py = (qval + 5) % 7
-                    dow_spec.setdefault('nth', {}).setdefault(py, []).append(nth)
+                    dow_spec.setdefault('nth', {}).setdefault(
+                        py, []).append(nth)
                     continue
-                    
+
                 # Last weekday (e.g. 5L or THUL)
                 if seg.endswith('L') and seg != 'L':
                     prefix = seg[:-1]
@@ -356,7 +365,8 @@ class QuartzTimetable(Timetable):
             # Build day‑of‑month candidate set
             dom_candidates: Optional[Set[int]] = None
             if 'last_weekday' in dom_spec:
-                last_day = pendulum.datetime(year, month, 1, tz=self.tz).end_of('month')
+                last_day = pendulum.datetime(
+                    year, month, 1, tz=self.tz).end_of('month')
                 wd = last_day.weekday()  # 0 = Monday, 6 = Sunday
                 if wd == 5:  # Saturday
                     last_day = last_day.subtract(days=1)
@@ -366,7 +376,8 @@ class QuartzTimetable(Timetable):
             elif 'last_day' in dom_spec:
                 dom_candidates = {days_in_month}
             elif 'step' in dom_spec:
-                start_dom, step_dom = dom_spec['step']  # type: ignore[assignment]
+                # type: ignore[assignment]
+                start_dom, step_dom = dom_spec['step']
                 candidates: Set[int] = set()
                 d = start_dom
                 while d <= days_in_month:
@@ -375,7 +386,9 @@ class QuartzTimetable(Timetable):
                     d += step_dom
                 dom_candidates = candidates
             elif 'days' in dom_spec:
-                candidates: Set[int] = {d for d in dom_spec['days'] if 1 <= d <= days_in_month}  # type: ignore[assignment]
+                # type: ignore[assignment]
+                candidates: Set[int] = {
+                    d for d in dom_spec['days'] if 1 <= d <= days_in_month}
                 dom_candidates = candidates
             elif 'wildcard' in dom_spec:
                 dom_candidates = None
@@ -385,7 +398,8 @@ class QuartzTimetable(Timetable):
                 candidates: Set[int] = set()
                 # nth weekday (e.g. MON#2)
                 if 'nth' in dow_spec:
-                    for py_wd, nth_list in dow_spec['nth'].items():  # type: ignore[assignment]
+                    # type: ignore[assignment]
+                    for py_wd, nth_list in dow_spec['nth'].items():
                         for nth in nth_list:
                             count = 0
                             matched_day = None
@@ -407,7 +421,8 @@ class QuartzTimetable(Timetable):
                 # simple weekday sets (e.g. MON-FRI)
                 if 'weekdays' in dow_spec:
                     for d in range(1, days_in_month + 1):
-                        if pendulum.datetime(year, month, d, tz=self.tz).weekday() in dow_spec['weekdays']:  # type: ignore[assignment]
+                        # type: ignore[assignment]
+                        if pendulum.datetime(year, month, d, tz=self.tz).weekday() in dow_spec['weekdays']:
                             candidates.add(d)
                 dow_candidates = candidates
             # Combine DOM and DOW constraints
@@ -448,7 +463,8 @@ class QuartzTimetable(Timetable):
                                 if (year == start_year and month == start_dt.month and day == start_dt.day and
                                         hour == start_dt.hour and minute == start_dt.minute and second < start_dt.second):
                                     continue
-                                candidate = pendulum.datetime(year, month, day, hour, minute, second, tz=self.tz)
+                                candidate = pendulum.datetime(
+                                    year, month, day, hour, minute, second, tz=self.tz)
                                 if candidate > dt:
                                     return candidate
         # No valid candidate found
