@@ -2,7 +2,6 @@ from typing import Optional, Tuple, Union
 from airflow.exceptions import AirflowException
 import logging
 from yeedu.hooks.yeedu import YeeduHook
-from airflow.utils.decorators import apply_defaults
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,7 +20,6 @@ class YeeduHealthCheckOperator:
 
     template_fields: Tuple[str] = ("run_id",)
 
-    @apply_defaults
     def __init__(
         self,
         base_url: str,

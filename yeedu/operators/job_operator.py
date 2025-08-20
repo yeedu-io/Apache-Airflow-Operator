@@ -2,7 +2,6 @@ from typing import Optional, Union, Tuple, List
 from airflow.exceptions import AirflowException
 import logging
 from yeedu.hooks.yeedu import YeeduHook
-from airflow.utils.decorators import apply_defaults
 
 
 logging.basicConfig(level=logging.INFO)
@@ -12,7 +11,6 @@ logger = logging.getLogger(__name__)
 class YeeduJobRunOperator:
     template_fields: Tuple[str] = ("run_id",)
 
-    @apply_defaults
     def __init__(
         self,
         job_id: str,

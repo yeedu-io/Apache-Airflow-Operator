@@ -22,6 +22,7 @@ setup(
         'requests>=2.27',
         'websocket-client>=1.8.0',
         'rel>=0.4.9.19',
+        'cron_descriptor',
     ],
     project_urls={
         'GitHub': 'https://github.com/yeedu-io/Apache-Airflow-Operator',
