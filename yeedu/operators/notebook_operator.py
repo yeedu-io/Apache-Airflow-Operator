@@ -11,7 +11,6 @@ import signal
 from datetime import datetime, timezone
 from airflow.exceptions import AirflowException
 from yeedu.hooks.yeedu import YeeduHook
-from airflow.utils.decorators import apply_defaults
 
 
 logging.basicConfig(level=logging.INFO)
@@ -22,7 +21,6 @@ class YeeduNotebookRunOperator:
     content_status = None
     error_value = None
 
-    @apply_defaults
     def __init__(
         self,
         base_url,

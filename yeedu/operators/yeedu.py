@@ -20,7 +20,6 @@
 
 from airflow.models import BaseOperator
 from airflow.exceptions import AirflowException
-from airflow.utils.decorators import apply_defaults
 from yeedu.operators.job_operator import YeeduJobRunOperator
 from yeedu.operators.notebook_operator import YeeduNotebookRunOperator
 from yeedu.operators.healthcheck_operator import YeeduHealthCheckOperator
@@ -36,7 +35,6 @@ logger = logging.getLogger(__name__)
 
 
 class YeeduOperator(BaseOperator):
-    @apply_defaults
     def __init__(
         self,
         job_url: str,

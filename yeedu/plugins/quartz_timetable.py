@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from cron_descriptor import get_description
 
 from calendar import monthrange
 
@@ -18,11 +19,18 @@ class QuartzTimetable(Timetable):
     
     cron_expression: str
     tz: str = "Asia/Kolkata"
-    start_date: Optional[DateTime] = None  # Anchors the first run when catchup=False
 
     # ------------------------------------------------------------------
     # Airflow Timetable interface methods
     # ------------------------------------------------------------------
+    @property
+    def summary(self) -> str:
+        return self.cron_expression
+    
+    @property
+    def description(self) -> str:
+        return get_description(self.cron_expression)
+    
     def infer_manual_data_interval(self, run_after: DateTime) -> DataInterval:
         
         anchor = run_after.in_timezone(self.tz)
@@ -44,48 +52,60 @@ class QuartzTimetable(Timetable):
         last_automated_data_interval: Optional[DataInterval],
         restriction: TimeRestriction,
     ) -> Optional[DagRunInfo]:
-        """Compute the next automatic run according to the cron expression."""
+        tz = self.tz
+        now = pendulum.now(tz)
 
-        # Determine the anchor datetime from which to compute the next trigger.
-        if last_automated_data_interval is None:
-            # For the first automated run, honour restriction.earliest, then start_date,
-            # otherwise use now().  Subtract one second to ensure a schedule time that
-            # exactly matches the start date is not skipped by the strict "greater than"
-            # comparison in ``_next_valid_start``.  This mirrors the behaviour of
-            base: DateTime =  self.start_date or restriction.earliest or pendulum.now(self.tz)
-            anchor = base.in_timezone(self.tz) if hasattr(base, "in_timezone") else pendulum.instance(base, tz=self.tz)
+        def subsec(dt, s):
             try:
-                anchor = anchor.subtract(seconds=1)
+                return dt.subtract(seconds=s)
             except Exception:
-                # Fallback if subtract isn't available
-                anchor = anchor - pendulum.duration(seconds=1)
-        else:
-            # For subsequent runs, begin searching from the end of the last data interval
-            anchor = last_automated_data_interval.end.in_timezone(self.tz)
-        next_start = self._next_valid_start(anchor)
+                return dt - pendulum.duration(seconds=s)
+
+        if last_automated_data_interval is None:
+            # Pick a FIXED anchor (don’t recompute from moving "now" on every call)
+            anchor = restriction.earliest.in_timezone(tz) if restriction.earliest else now
+
+            # With catchup disabled, don't start before "now"
+            if not restriction.catchup and anchor < now:
+                anchor = now
+
+            next_start = self._next_valid_start(subsec(anchor, 1))
+            if next_start is None:
+                return None
+
+            # First run: make run_after almost immediately so it can't drift
+            first_end = next_start.add(seconds=1)
+
+            if restriction.latest and next_start > restriction.latest.in_timezone(tz):
+                return None
+            return DagRunInfo.interval(start=next_start, end=first_end)
+
+        # Subsequent runs: continue from the end of the last interval
+        anchor = last_automated_data_interval.end.in_timezone(tz)
+        next_start = self._next_valid_start(subsec(anchor, 1))
         if next_start is None:
             return None
-        # Respect any end-of-schedule restriction
-        if restriction.latest and next_start > restriction.latest.in_timezone(self.tz):
+
+        if restriction.latest and next_start > restriction.latest.in_timezone(tz):
             return None
+
+        # Normal cadence (1-minute data interval)
         return DagRunInfo.interval(start=next_start, end=next_start.add(minutes=1))
+
 
     def serialize(self) -> Dict[str, Any]:
         """Serialize the timetable's configuration for persistence."""
         return {
             "cron_expression": self.cron_expression,
             "tz": self.tz,
-            "start_date": self.start_date.to_iso8601_string() if self.start_date else None,
         }
 
     @classmethod
     def deserialize(cls, data: Dict[str, Any]) -> "QuartzTimetable":
-        sd = data.get("start_date")
         tz = data.get("tz", "Asia/Kolkata")
         return cls(
             cron_expression=data["cron_expression"],
             tz=tz,
-            start_date=pendulum.parse(sd).in_timezone(tz) if sd else None,
         )
 
     # ------------------------------------------------------------------
