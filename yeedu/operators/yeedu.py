@@ -130,27 +130,28 @@ class YeeduOperator(BaseOperator):
 
     def extract_ids(self, url):
         parsed_url = urlparse(url)
-        restapi_port = urlparse(url).port
-        path_segments = parsed_url.path.split("/")
-        tenant_id = path_segments[2] if len(path_segments) > 2 else None
-        workspace_id = path_segments[4] if len(path_segments) > 4 else None
+        restapi_port = parsed_url.port
+        path_segments = parsed_url.path.strip("/").split("/")
 
-        if "notebook" in path_segments:
+        tenant_id = path_segments[1] if len(path_segments) > 1 else None
+        workspace_id = path_segments[3] if len(path_segments) > 3 else None
+
+        if "job" in path_segments:
+            conf_id = (
+                path_segments[path_segments.index("job") + 1]
+                if len(path_segments) > path_segments.index("job") + 1
+                else None
+            )
+            job_type = "job"
+        elif "notebook" in path_segments:
             conf_id = (
                 path_segments[path_segments.index("notebook") + 1]
                 if len(path_segments) > path_segments.index("notebook") + 1
                 else None
             )
             job_type = "notebook"
-        elif "conf" in path_segments:
-            conf_id = (
-                path_segments[path_segments.index("conf") + 2]
-                if len(path_segments) > path_segments.index("conf") + 2
-                else None
-            )
-            job_type = "conf"
         elif "healthCheck" in path_segments:
-            job_type = "healthCheck"
+            job_type = "healthcheck"
             conf_id = -1
             workspace_id = -1
         else:
@@ -158,7 +159,6 @@ class YeeduOperator(BaseOperator):
                 "Please provide valid URL to schedule/run Jobs and Notebooks"
             )
 
-        # Construct base URL with :{restapi_port}/api/v1/ appended
         base_url = f"{parsed_url.scheme}://{parsed_url.hostname}:{restapi_port}/api/v1/"
 
         return (
@@ -180,9 +180,9 @@ class YeeduOperator(BaseOperator):
         :param context: The execution context.
         :type context: dict
         """
-        if self.job_type == "conf":
+        if self.job_type == "job":
             job_operator = YeeduJobRunOperator(
-                job_conf_id=self.conf_id,
+                job_id=self.conf_id,
                 base_url=self.base_url,
                 workspace_id=self.workspace_id,
                 tenant_id=self.tenant_id,
@@ -197,7 +197,7 @@ class YeeduOperator(BaseOperator):
             notebook_operator = YeeduNotebookRunOperator(
                 base_url=self.base_url,
                 workspace_id=self.workspace_id,
-                notebook_conf_id=self.conf_id,
+                notebook_id=self.conf_id,
                 tenant_id=self.tenant_id,
                 connection_id=self.connection_id,
                 token_variable_name=self.token_variable_name,

@@ -19,20 +19,21 @@ class YeeduHealthCheckOperator:
     :param kwargs: Additional keyword arguments.
     """
 
-    template_fields: Tuple[str] = ("job_id",)
+    template_fields: Tuple[str] = ("run_id",)
 
     @apply_defaults
     def __init__(
         self,
         base_url: str,
         connection_id: str,
+        token_variable_name: str = None,
         *args,
         **kwargs,
     ) -> None:
         """
         Initialize the YeeduHealthCheckOperator.
 
-        :param job_conf_id: The ID of the job configuration in Yeedu (mandatory).
+        :param job_id: The ID of the job configuration in Yeedu (mandatory).
         :param tenant_id: Yeedu API tenant_id. If not provided, retrieved from url provided.
         :param hostname: Yeedu API hostname (mandatory).
         :param workspace_id: The ID of the Yeedu workspace to execute the job within (mandatory).
@@ -40,17 +41,18 @@ class YeeduHealthCheckOperator:
         super().__init__(*args, **kwargs)
         self.base_url: str = base_url
         self.connection_id = connection_id
+        self.token_variable_name = token_variable_name
         self.hook: YeeduHook = YeeduHook(
             conf_id=None,
             tenant_id=None,
             base_url=self.base_url,
             workspace_id=None,
             connection_id=self.connection_id,
-            token_variable_name=None,
+            token_variable_name=self.token_variable_name,
         )
-        self.job_id: Optional[Union[int, None]] = None
+        self.run_id: Optional[Union[int, None]] = None
 
-    def execute(self) -> None:
+    def execute(self, context: dict) -> None:
         """
         Execute the YeeduHealthCheckOperator.
 

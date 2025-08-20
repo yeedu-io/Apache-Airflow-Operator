@@ -341,11 +341,11 @@ class YeeduHook(BaseHook):
         health_check_url: str = self.base_url + f'healthCheck'
         return self._api_request('GET', health_check_url)
 
-    def submit_job(self, job_conf_id: str, arguments: str = None, conf: List[str] = None) -> int:
+    def submit_job(self, job_id: str, arguments: str = None, conf: List[str] = None) -> int:
         """
         Submits a job to Yeedu.
 
-        :param job_conf_id: The job configuration ID.
+        :param job_id: The job ID.
         :param arguments: Optional arguments to pass to the job
         :param conf: Optional configuration for the job
         :return: The ID of the submitted job.
@@ -353,8 +353,8 @@ class YeeduHook(BaseHook):
 
         try:
             job_url: str = self.base_url + \
-                f'workspace/{self.workspace_id}/spark/job'
-            data: dict = {'job_conf_id': job_conf_id}
+                f'workspace/{self.workspace_id}/spark/job/run'
+            data: dict = {'job_id': job_id}
 
             if arguments is not None:
                 data['arguments'] = arguments
@@ -365,9 +365,9 @@ class YeeduHook(BaseHook):
             api_status_code = response.status_code
             if api_status_code == 200:
                 response_json = response.json()
-                job_id = response.json().get('job_id')
-                if job_id:
-                    return job_id
+                run_id = response.json().get('run_id')
+                if run_id:
+                    return run_id
                 else:
                     raise AirflowException(response_json)
             else:
@@ -376,55 +376,55 @@ class YeeduHook(BaseHook):
         except Exception as e:
             raise AirflowException(e)
 
-    def get_job_status(self, job_id: int) -> requests.Response:
+    def get_job_status(self, run_id: int) -> requests.Response:
         """
         Retrieves the status of a Yeedu job.
 
-        :param job_id: The ID of the job.
+        :param run_id: The ID of the job.
         :return: The API response containing job status.
         """
         try:
             job_status_url: str = self.base_url + \
-                f'workspace/{self.workspace_id}/spark/job/{job_id}'
+                f'workspace/{self.workspace_id}/spark/job/run/{run_id}'
             return self._api_request('GET', job_status_url)
         except Exception as e:
             self.log.info(f"An error occurred during fetching job_status: {e}")
             raise AirflowException(e)
 
-    def get_job_logs(self, job_id: int, log_type: str) -> str:
+    def get_job_logs(self, run_id: int, log_type: str) -> str:
         """
         Retrieves logs for a Yeedu job.
 
-        :param job_id: The ID of the job.
+        :param run_id: The ID of the job.
         :param log_type: The type of logs to retrieve ('stdout' or 'stderr').
         :return: The logs for the specified job and log type.
         """
 
         try:
             logs_url: str = self.base_url + \
-                f'workspace/{self.workspace_id}/spark/job/{job_id}/log/{log_type}'
+                f'workspace/{self.workspace_id}/spark/job/run/{run_id}/log/{log_type}'
             time.sleep(40)
             return self._api_request('GET', logs_url).text
 
         except Exception as e:
             raise AirflowException(e)
 
-    def kill_job(self, job_id: int):
+    def kill_job(self, run_id: int):
         try:
             job_kill_url = self.base_url + \
-                f'workspace/{self.workspace_id}/spark/job/kill/{job_id}'
-            self.log.info(f"Stopping job of Job Id {job_id}")
+                f'workspace/{self.workspace_id}/spark/job/run/stop/{run_id}'
+            self.log.info(f"Stopping job of Job Id {run_id}")
             response = self._api_request('POST', job_kill_url)
             if response.status_code == 201:
-                self.log.info(f"Stopped the Job with Job Id {job_id}")
+                self.log.info(f"Stopped the Job with Job Id {run_id}")
         except Exception as e:
             raise AirflowException(e)
 
-    def wait_for_completion(self, job_id: int) -> str:
+    def wait_for_completion(self, run_id: int) -> str:
         """
         Waits for the completion of a Yeedu job and retrieves its final status.
 
-        :param job_id: The ID of the job.
+        :param run_id: The ID of the job.
         :return: The final status of the job.
         :raises AirflowException: If continuous API failures reach the threshold.
         """
@@ -434,14 +434,14 @@ class YeeduHook(BaseHook):
 
                 try:
                     # check job_status
-                    response: requests.Response = self.get_job_status(job_id)
+                    response: requests.Response = self.get_job_status(run_id)
                     api_status_code: int = response.status_code
                     self.log.info(
                         f"Current API Status Code: {api_status_code}")
 
                     if api_status_code == 200:
 
-                        job_status: str = response.json().get('job_status')
+                        job_status: str = response.json().get('run_status')
                         self.log.info(f"Current Job Status: {job_status}")
                         if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED', 'STOPPED']:
                             return job_status
