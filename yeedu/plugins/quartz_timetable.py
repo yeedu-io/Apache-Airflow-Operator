@@ -46,52 +46,27 @@ class QuartzTimetable(Timetable):
         start = next_start or anchor
         return DataInterval(start=start, end=start.add(minutes=1))
 
-    def next_dagrun_info(
-        self,
-        *,
-        last_automated_data_interval: Optional[DataInterval],
-        restriction: TimeRestriction,
-    ) -> Optional[DagRunInfo]:
+    def next_dagrun_info(self, *, last_automated_data_interval: Optional[DataInterval], restriction: TimeRestriction) -> Optional[DagRunInfo]:
         tz = self.tz
         now = pendulum.now(tz)
+        
+        # If last_automated_data_interval exists, continue from there; otherwise, use current time
+        anchor = last_automated_data_interval.end.in_timezone(tz) if last_automated_data_interval else now
 
-        def subsec(dt, s):
-            try:
-                return dt.subtract(seconds=s)
-            except Exception:
-                return dt - pendulum.duration(seconds=s)
+        # If catchup is False, we won't backfill or run the missed jobs.
+        if not restriction.catchup and anchor < now:
+            anchor = now  # Adjust anchor to the current time if catchup is off
 
-        if last_automated_data_interval is None:
-            # Pick a FIXED anchor (don’t recompute from moving "now" on every call)
-            anchor = restriction.earliest.in_timezone(tz) if restriction.earliest else now
-
-            # With catchup disabled, don't start before "now"
-            if not restriction.catchup and anchor < now:
-                anchor = now
-
-            next_start = self._next_valid_start(subsec(anchor, 1))
-            if next_start is None:
-                return None
-
-            # First run: make run_after almost immediately so it can't drift
-            first_end = next_start.add(seconds=1)
-
-            if restriction.latest and next_start > restriction.latest.in_timezone(tz):
-                return None
-            return DagRunInfo.interval(start=next_start, end=first_end)
-
-        # Subsequent runs: continue from the end of the last interval
-        anchor = last_automated_data_interval.end.in_timezone(tz)
-        next_start = self._next_valid_start(subsec(anchor, 1))
+        next_start = self._next_valid_start(anchor)
         if next_start is None:
             return None
 
+        # Ensure next start does not exceed the latest allowed time
         if restriction.latest and next_start > restriction.latest.in_timezone(tz):
             return None
 
-        # Normal cadence (1-minute data interval)
-        return DagRunInfo.interval(start=next_start, end=next_start.add(minutes=1))
-
+        first_end = next_start.add(seconds=1)
+        return DagRunInfo.interval(start=next_start, end=first_end)
 
     def serialize(self) -> Dict[str, Any]:
         """Serialize the timetable's configuration for persistence."""
