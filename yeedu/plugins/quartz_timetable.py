@@ -67,7 +67,6 @@ class QuartzTimetable(Timetable):
             return None
 
         # Normal cadence (1-minute data interval)
-        return DagRunInfo.interval(start=next_start, end=next_start.add(minutes=1))
 
         first_end = next_start.add(seconds=1)
         return DagRunInfo.interval(start=next_start, end=first_end)
