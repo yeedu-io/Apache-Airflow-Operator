@@ -46,6 +46,8 @@ class YeeduNotebookRunOperator:
         self.run_id = None
         self.cell_output_data = []
         self.execution_times = {}
+        self.notebook_json = {}
+        self.error_name = None
         self.ws = None
         self.executionCount = 0
         self.hook: YeeduHook = YeeduHook(
@@ -425,6 +427,15 @@ class YeeduNotebookRunOperator:
 
     def update_notebook_cells(self):
         try:
+            if not self.cell_output_data:
+                logger.info("No cell output data to update")
+                return
+
+            if not self.notebook_json or "cells" not in self.notebook_json:
+                logger.warning(
+                    "notebook_json not initialized correctly, skipping update")
+                return
+
             msg_id_to_update = self.cell_output_data[0]["msg_id"]
             for cell in self.notebook_json["cells"]:
                 if cell.get("cell_uuid") == msg_id_to_update:
