@@ -33,19 +33,8 @@ class QuartzTimetable(Timetable):
         return get_description(self.cron_expression)
 
     def infer_manual_data_interval(self, run_after: DateTime) -> DataInterval:
-
         anchor = run_after.in_timezone(self.tz)
-        # Look for the next valid start after one second before the trigger.
-        # This allows a manual trigger that lands exactly on a scheduled run to
-        # include the current moment.
-        try:
-            search_time = anchor.subtract(seconds=1)
-        except Exception:
-            search_time = anchor - pendulum.duration(seconds=1)
-        next_start = self._next_valid_start(search_time)
-        # If there is no next start, or it is None, fall back to the trigger time.
-        start = next_start or anchor
-        return DataInterval(start=start, end=start.add(minutes=1))
+        return DataInterval(start=anchor, end=anchor.add(seconds=1))
 
     def next_dagrun_info(self, *, last_automated_data_interval: Optional[DataInterval], restriction: TimeRestriction) -> Optional[DagRunInfo]:
         tz = self.tz
