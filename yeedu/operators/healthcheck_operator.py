@@ -1,10 +1,6 @@
 from typing import Optional, Tuple, Union
 from airflow.exceptions import AirflowException
-import logging
 from yeedu.hooks.yeedu import YeeduHook
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class YeeduHealthCheckOperator:
@@ -25,6 +21,7 @@ class YeeduHealthCheckOperator:
         base_url: str,
         connection_id: str,
         token_variable_name: str = None,
+        logger=None,
         *args,
         **kwargs,
     ) -> None:
@@ -49,6 +46,7 @@ class YeeduHealthCheckOperator:
             token_variable_name=self.token_variable_name,
         )
         self.run_id: Optional[Union[int, None]] = None
+        self.log = logger
 
     def execute(self, context: dict) -> None:
         """
@@ -59,7 +57,7 @@ class YeeduHealthCheckOperator:
         """
         try:
             health_check_status: str = self.hook.yeedu_health_check()
-            logger.info(
+            self.log.info(
                 f"Health Check Status: {health_check_status.status_code}")
         except Exception as e:
             raise AirflowException(e)

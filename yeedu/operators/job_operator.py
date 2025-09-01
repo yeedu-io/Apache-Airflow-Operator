@@ -1,11 +1,6 @@
 from typing import Optional, Union, Tuple, List
 from airflow.exceptions import AirflowException
-import logging
 from yeedu.hooks.yeedu import YeeduHook
-
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class YeeduJobRunOperator:
@@ -22,6 +17,7 @@ class YeeduJobRunOperator:
         restapi_port: int,
         arguments: str = None,
         conf: List[str] = None,
+        logger=None,
         *args,
         **kwargs,
     ) -> None:
@@ -44,11 +40,12 @@ class YeeduJobRunOperator:
             token_variable_name=self.token_variable_name,
         )
         self.run_id: Optional[Union[int, None]] = None
+        self.log = logger
 
     def execute(self, context: dict) -> None:
         try:
             self.hook.yeedu_login(context)
-            logger.info("Job Id: %s", self.job_id)
+            self.log.info("Job Id: %s", self.job_id)
             run_id = self.hook.submit_job(
                 self.job_id,
                 arguments=self.arguments,
@@ -56,30 +53,30 @@ class YeeduJobRunOperator:
             )
             restapi_port = self.restapi_port
 
-            logger.info("Job Submited (Job Id: %s)", run_id)
+            self.log.info("Job Submited (Job Id: %s)", run_id)
             job_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{run_id}/run-metrics?type=spark_job".replace(
                 f":{restapi_port}/api/v1", ""
             )
-            logger.info(
+            self.log.info(
                 "Check Yeedu Job run status and logs here " + job_run_url)
             job_status: str = self.hook.wait_for_completion(run_id)
 
-            logger.info("Final Job Status: %s", job_status)
+            self.log.info("Final Job Status: %s", job_status)
 
             job_log_stdout: str = self.hook.get_job_logs(run_id, "stdout")
             job_log_stderr: str = self.hook.get_job_logs(run_id, "stderr")
             job_log: str = " stdout: " + job_log_stdout + " stderr: " + job_log_stderr
-            logger.info("Logs for run ID %s (%s)", run_id, job_log)
+            self.log.info("Logs for run ID %s (%s)", run_id, job_log)
 
             if job_status in ["ERROR", "TERMINATED", "KILLED", "STOPPED"]:
-                logger.error(job_log)
+                self.log.error(job_log)
                 raise AirflowException(job_log)
 
         except Exception as e:
             raise AirflowException(e)
 
         finally:
-            logger.info("Stopping job in finally")
+            self.log.info("Stopping job in finally")
             job_status = self.hook.get_job_status(
                 run_id).json().get("run_status")
             if job_status not in ["ERROR", "TERMINATED", "KILLED", "STOPPED", "DONE"]:
@@ -90,4 +87,4 @@ class YeeduJobRunOperator:
                 if auth_type in ["LDAP", "AAD"]:
                     self.hook.yeedu_logout(context)
             except Exception as e:
-                logger.warning(f"Logout skipped or failed: {e}")
+                self.log.warning(f"Logout skipped or failed: {e}")

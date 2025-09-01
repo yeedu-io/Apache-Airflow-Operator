@@ -23,15 +23,8 @@ from airflow.exceptions import AirflowException
 from yeedu.operators.job_operator import YeeduJobRunOperator
 from yeedu.operators.notebook_operator import YeeduNotebookRunOperator
 from yeedu.operators.healthcheck_operator import YeeduHealthCheckOperator
-import logging
 from typing import List
 from urllib.parse import urlparse
-
-# Configure the logging system
-logging.basicConfig(level=logging.INFO)  # Set the logging level to INFO
-
-# Create a logger object
-logger = logging.getLogger(__name__)
 
 
 class YeeduOperator(BaseOperator):
@@ -189,6 +182,7 @@ class YeeduOperator(BaseOperator):
                 restapi_port=self.restapi_port,
                 arguments=self.arguments,
                 conf=self.conf,
+                logger=self.log.getChild("job_operator")
             )
             return job_operator.execute(context)
         elif self.job_type == "notebook":
@@ -200,12 +194,14 @@ class YeeduOperator(BaseOperator):
                 connection_id=self.connection_id,
                 token_variable_name=self.token_variable_name,
                 restapi_port=self.restapi_port,
+                logger=self.log.getChild("notebook_operator")
             )
             return notebook_operator.execute(context)
         elif self.job_type == "healthcheck":
             health_check_operator = YeeduHealthCheckOperator(
                 base_url=self.base_url,
                 connection_id=self.connection_id,
+                logger=self.log.getChild("health_check_operator")
             )
             return health_check_operator.execute(context)
         else:
@@ -232,7 +228,7 @@ class YeeduOperator(BaseOperator):
                     f"Invalid conf item '{item}'. Both key and value must be non-empty")
 
             if key in processed_conf:
-                logger.warning(
+                self.log.warning(
                     f"Duplicate configuration key found: '{key}'. "
                     f"Value '{processed_conf[key]}' will be overwritten with '{value}'"
                 )

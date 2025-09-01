@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from cron_descriptor import get_description
@@ -10,9 +9,6 @@ from calendar import monthrange
 import pendulum
 from pendulum import DateTime
 from airflow.timetables.base import Timetable, DagRunInfo, DataInterval, TimeRestriction
-
-
-LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -39,9 +35,10 @@ class QuartzTimetable(Timetable):
     def next_dagrun_info(self, *, last_automated_data_interval: Optional[DataInterval], restriction: TimeRestriction) -> Optional[DagRunInfo]:
         tz = self.tz
         now = pendulum.now(tz)
-        
+
         # If last_automated_data_interval exists, continue from there; otherwise, use current time
-        anchor = last_automated_data_interval.end.in_timezone(tz) if last_automated_data_interval else now
+        anchor = last_automated_data_interval.end.in_timezone(
+            tz) if last_automated_data_interval else now
 
         # If catchup is False, we won't backfill or run the missed jobs.
         if not restriction.catchup and anchor < now:
