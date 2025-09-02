@@ -980,6 +980,8 @@ class YeeduNotebookRunOperator:
 
             # If code is in an array of string format then join it into a single string
             if isinstance(code, list):
+                self.log.debug(
+                    f"Code is a list, joining into a single string for message id ({msg_id}) ")
                 code = "".join(code)
 
             execute_request = {
