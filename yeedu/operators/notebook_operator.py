@@ -134,8 +134,14 @@ class YeeduNotebookRunOperator:
         }
         url = f"{self.base_url}workspace/{self.workspace_id}/notebook/runs"
         attempts_failure = 0
+        start_time = time.time()
+        max_wait_time = MAX_ATTEMPTS * DELAY_SECONDS
+
         try:
             while True:
+                elapsed_time = time.time() - start_time
+                remaining_time = max_wait_time - elapsed_time
+
                 try:
                     # Use the hook's session and headers
                     response = self.hook.session.get(
@@ -149,7 +155,8 @@ class YeeduNotebookRunOperator:
                         return response.json()['data'][0]['run_id']
                     if status_code == 404:
                         self.log.info(
-                            f"Notebook is not yet running. Retrying after {DELAY_SECONDS} seconds...")
+                            f"Notebook is not yet running. Retrying after {DELAY_SECONDS} seconds... "
+                            f"(Elapsed: {int(elapsed_time)}s, Remaining: {int(remaining_time)}s) ")
                         time.sleep(DELAY_SECONDS)
                         notebook_status = self.check_notebook_instance_status()
                         if notebook_status in TERMINAL_STATES:
