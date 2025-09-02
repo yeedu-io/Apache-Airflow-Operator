@@ -497,6 +497,7 @@ class YeeduNotebookRunOperator:
 
                     self.cell_output_data.clear()
             for cell in self.notebook_json["cells"]:
+                cell.pop("msg_id", None)
                 for output in cell.get("outputs", []):
                     output.pop("msg_id", None)
                     output.setdefault("output_type", "text")
@@ -970,6 +971,11 @@ class YeeduNotebookRunOperator:
         try:
             start_time = datetime.now(timezone.utc).isoformat(
                 timespec='milliseconds').replace('+00:00', 'Z')
+
+            # If code is in an array of string format then join it into a single string
+            if isinstance(code, list):
+                code = "".join(code)
+
             execute_request = {
                 "header": {
                     "msg_type": "execute_request",
@@ -1035,7 +1041,7 @@ class YeeduNotebookRunOperator:
             for i, cell in enumerate(self.notebook_cells):
 
                 code = cell.get("source", "")
-                msg_id = cell.get("cell_uuid")
+                msg_id = cell.setdefault("cell_uuid", str(uuid.uuid4()))
 
                 self.log.debug(
                     f"Sending execution request for cell {i+1}/{len(self.notebook_cells)} (message id: {msg_id})")
