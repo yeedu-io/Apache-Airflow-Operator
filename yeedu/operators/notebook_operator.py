@@ -437,6 +437,8 @@ class YeeduNotebookRunOperator:
                 return
 
             msg_id_to_update = self.cell_output_data[0]["msg_id"]
+            skip_outputs = False
+            MAX_JSON_SIZE = 30 * 1024 * 1024  # 30 MB
             for cell in self.notebook_json["cells"]:
                 if cell.get("cell_uuid") == msg_id_to_update:
                     timing_info = self.execution_times.get(
@@ -452,7 +454,47 @@ class YeeduNotebookRunOperator:
                     if end_time:
                         cell["metadata"]["endTime"] = end_time
                     cell["metadata"]["lastRunTime"] = run_time
-                    cell["outputs"] = copy.deepcopy(self.cell_output_data)
+                    if not skip_outputs:
+                        cell["outputs"] = copy.deepcopy(self.cell_output_data)
+
+                        # Check size after adding outputs
+                        current_size = len(json.dumps(
+                            self.notebook_json).encode("utf-8"))
+                        if current_size > MAX_JSON_SIZE:
+                            self.log.warning(
+                                "Notebook JSON size exceeds 30MB, trimming output...")
+
+                            # Remove outputs one by one until within limit
+                            trimmed_outputs = []
+                            for out in cell["outputs"]:
+                                trimmed_outputs.append(out)
+                                cell["outputs"] = trimmed_outputs
+                                size_with_this = len(
+                                    json.dumps(self.notebook_json).encode(
+                                        "utf-8")
+                                )
+                                if size_with_this > MAX_JSON_SIZE:
+                                    # remove the last output that caused overflow
+                                    trimmed_outputs.pop()
+                                    skip_outputs = True
+                                    break
+
+                            # Add truncation message
+                            trunc_msg = {
+                                "output_type": "text",
+                                "Celloutput": "Output has been truncated to comply with 30MB limit",
+                            }
+                            trimmed_outputs.append(trunc_msg)
+                            cell["outputs"] = trimmed_outputs
+                            while (
+                                len(json.dumps(self.notebook_json).encode("utf-8"))
+                                > MAX_JSON_SIZE
+                                and len(trimmed_outputs) > 1
+                            ):
+                                # remove more outputs if needed (keep only trunc msg)
+                                trimmed_outputs.pop(-2)
+                                cell["outputs"] = trimmed_outputs
+
                     self.cell_output_data.clear()
             for cell in self.notebook_json["cells"]:
                 for output in cell.get("outputs", []):
