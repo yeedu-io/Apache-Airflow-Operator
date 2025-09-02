@@ -497,7 +497,6 @@ class YeeduNotebookRunOperator:
 
                     self.cell_output_data.clear()
             for cell in self.notebook_json["cells"]:
-                cell.pop("msg_id", None)
                 for output in cell.get("outputs", []):
                     output.pop("msg_id", None)
                     output.setdefault("output_type", "text")
