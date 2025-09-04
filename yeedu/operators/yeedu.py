@@ -97,7 +97,7 @@ class YeeduOperator(BaseOperator):
             self.restapi_port,
         ) = self.extract_ids(self.job_url)
         # Validate and process conf if provided
-        if conf is not None and self.job_type == "conf":
+        if conf is not None and (self.job_type == "conf" or self.job_type == "notebook"):
             if not isinstance(conf, List):
                 raise AirflowException("conf parameter must be a list")
             self.conf = self._validate_conf(conf)  # Store processed conf
@@ -194,6 +194,8 @@ class YeeduOperator(BaseOperator):
                 connection_id=self.connection_id,
                 token_variable_name=self.token_variable_name,
                 restapi_port=self.restapi_port,
+                arguments=self.arguments,
+                conf=self.conf,
                 logger=self.log.getChild("notebook_operator")
             )
             return notebook_operator.execute(context)
