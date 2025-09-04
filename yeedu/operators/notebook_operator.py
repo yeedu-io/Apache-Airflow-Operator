@@ -1,6 +1,6 @@
 import copy
 import json
-import logging
+import socket
 import threading
 import time
 import uuid
@@ -782,20 +782,52 @@ class YeeduNotebookRunOperator:
         self.log.error(f"WebSocket encountered an error: {error}")
 
     def on_close(self, ws, close_status_code, close_msg):
-        self.log.info(
-            f"WebSocket closed with status code: {close_status_code} and message: {close_msg}")
+        try:
+            self.log.info(
+                f"WebSocket closed with status code: {close_status_code} and message: {close_msg}")
+            # Only attempt to close if socket exists
+            if hasattr(ws, 'sock') and ws.sock:
+                try:
+                    # The socket object needs to be properly closed
+                    if hasattr(ws.sock, 'sock') and ws.sock.sock:
+                        try:
+                            self.log.debug(
+                                "Closing socket connection with SHUT_RDWR flag (stops both sending and receiving data)")
+                            ws.sock.sock.shutdown(socket.SHUT_RDWR)
+                        except (OSError, socket.error) as e:
+                            self.log.debug(
+                                f"Socket shutdown raised an expected error: {e}")
+                    ws.close()
+                    self.log.debug("WebSocket socket successfully closed")
+                except Exception as e:
+                    # Socket might already be closed, which is fine
+                    self.log.debug(
+                        f"Socket already closed or error occurred: {e}")
+        except Exception as e:
+            self.log.warning(f"Error during WebSocket close handler: {e}")
 
     def on_open(self, ws):
         self.log.info("WebSocket opened")
 
     def close_websocket_connection(self):
         if self.ws:
-            if self.ws.sock and self.ws.sock.connected:
+            if self.ws.sock and hasattr(self.ws.sock, 'connected') and self.ws.sock.connected:
                 self.log.info("Closing the active WebSocket connection")
-                self.ws.close()
-                self.log.info("WebSocket connection closed")
+                try:
+                    if hasattr(self.ws.sock, 'sock') and self.ws.sock.sock:
+                        try:
+                            self.log.debug(
+                                "Closing socket connection with SHUT_RDWR flag (stops both sending and receiving data)")
+                            self.ws.sock.sock.shutdown(socket.SHUT_RDWR)
+                        except (OSError, socket.error) as e:
+                            self.log.debug(
+                                f"Socket shutdown raised an expected error: {e}")
+                    self.ws.close()
+                    self.log.info("WebSocket connection closed")
+                except Exception as e:
+                    self.log.warning(f"Error during WebSocket closure: {e}")
             else:
-                self.log.info("No active WebSocket connections")
+                self.log.info("No active WebSocket connections to close")
         else:
             self.log.info("WebSocket instance is not initialized")
 
@@ -932,7 +964,7 @@ class YeeduNotebookRunOperator:
 
     def connect_websocket(self):
         """
-        Modified connect_websocket method with retry logic
+        Modified connect_websocket method with retry logic and timeout handling
         """
         ws_url = self.get_websocket_token()
         if not ws_url:
@@ -948,6 +980,8 @@ class YeeduNotebookRunOperator:
 
         # Connection test passed, proceed with actual connection
         self.log.info("Establishing persistent WebSocket connection...")
+
+        # Add ping_timeout and ping_interval to automatically detect dead connections
         self.ws = websocket.WebSocketApp(
             ws_url,
             on_open=self.on_open,
@@ -957,19 +991,25 @@ class YeeduNotebookRunOperator:
         )
 
         def run_forever_in_thread():
+            sslopt = {}
             if self.hook.YEEDU_AIRFLOW_VERIFY_SSL == "true":
-                self.ws.run_forever(
-                    sslopt={
-                        "cert_reqs": ssl.CERT_REQUIRED,
-                        "ca_certs": self.hook.YEEDU_SSL_CERT_FILE,
-                    },
-                    reconnect=5,
-                )
-            elif self.hook.YEEDU_AIRFLOW_VERIFY_SSL == "false":
-                self.ws.run_forever(
-                    sslopt={"cert_reqs": ssl.CERT_NONE}, reconnect=5)
+                sslopt = {
+                    "cert_reqs": ssl.CERT_REQUIRED,
+                    "ca_certs": self.hook.YEEDU_SSL_CERT_FILE,
+                }
+            else:
+                sslopt = {"cert_reqs": ssl.CERT_NONE}
+
+            # Add ping_timeout and ping_interval to detect dead connections
+            self.ws.run_forever(
+                sslopt=sslopt,
+                reconnect=5,
+                ping_interval=30,  # Send a ping every 30 seconds
+                ping_timeout=10,   # If no pong received within 10 seconds, on_close will be triggered
+            )
 
         thread = threading.Thread(target=run_forever_in_thread)
+        thread.daemon = True  # Make thread daemon so it won't prevent process exit
         thread.start()
         return self.ws
 
@@ -1018,15 +1058,43 @@ class YeeduNotebookRunOperator:
             self.log.error(f"Error while sending execute request: {e}")
             raise e
 
-    def signal_handler(sig, frame):
-        print("Signal received, aborting...")
+    def signal_handler(self, sig, frame):
+        signal_name = "SIGINT" if sig == signal.SIGINT else "SIGTERM"
+        self.log.info(
+            f"Received {signal_name}, performing graceful shutdown...")
+
         rel.abort()
+        self.stop_notebook()
+        self.cleanup()
+
+    def cleanup(self):
+        """Ensure all resources are properly cleaned up"""
+        # Close WebSocket connections
+        if hasattr(self, 'ws') and self.ws:
+            try:
+                # Close the WebSocket connection
+                self.close_websocket_connection()
+                self.log.info("WebSocket connection closed.")
+
+            except Exception as e:
+                self.log.warning(f"Failed to close WebSocket: {e}")
+
+        # Close HTTP sessions
+        if hasattr(self, 'hook') and hasattr(self.hook, 'session'):
+            try:
+                # Explicitly close all session connections
+                self.hook.session.close()
+                self.log.info("HTTP session closed.")
+            except Exception as e:
+                self.log.warning(f"Failed to close HTTP session: {e}")
 
     def execute(self, context: dict):
         try:
+            signal.signal(signal.SIGINT, self.signal_handler)
+            signal.signal(signal.SIGTERM, self.signal_handler)
+
             self.hook.yeedu_login(context)
             self.create_notebook_instance()
-            signal.signal(signal.SIGINT, self.signal_handler)
             self.ws = self.connect_websocket()
             rel.dispatch()
             time.sleep(5)
@@ -1133,8 +1201,6 @@ class YeeduNotebookRunOperator:
             self.log.error(f"Notebook execution failed with error:  {e}")
             raise e
         finally:
-            self.close_websocket_connection()
-            self.log.info("WebSocket connection closed in finally block.")
             if self.run_id is not None:
                 self.log.debug(
                     "Setting notebook executed flag to False in finally block.")
@@ -1154,3 +1220,6 @@ class YeeduNotebookRunOperator:
                     self.hook.yeedu_logout(context)
             except Exception as e:
                 self.log.warning(f"Logout skipped or failed: {e}")
+
+            self.cleanup()
+            self.log.info("Cleanup completed in finally block.")

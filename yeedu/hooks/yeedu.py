@@ -92,30 +92,31 @@ class YeeduHook(BaseHook):
                 # check for the ssl cert dir
                 if not self.YEEDU_SSL_CERT_FILE:
                     self.log.error(
-                        f"Please provide YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {self.YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
+                        f"SSL verification is enabled but [YEEDU_AIRFLOW_VERIFY_SSL (default: true)] is not provided")
                     raise AirflowException(
-                        f"Please provide YEEDU_SSL_CERT_FILE if YEEDU_AIRFLOW_VERIFY_SSL is set to: {self.YEEDU_AIRFLOW_VERIFY_SSL} (default: true)")
+                        f"SSL verification is enabled [YEEDU_AIRFLOW_VERIFY_SSL (default: true)] but YEEDU_SSL_CERT_FILE is not provided")
                 else:
                     # check if the file exists or not
                     if os.path.isfile(self.YEEDU_SSL_CERT_FILE):
                         return self.YEEDU_SSL_CERT_FILE
                     else:
                         self.log.error(
-                            f"Provided self.YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} doesnot exists")
+                            f"Provided YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} does not exist")
                         raise AirflowException(
-                            f"Provided self.YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} doesnot exists")
+                            f"Provided YEEDU_SSL_CERT_FILE: {self.YEEDU_SSL_CERT_FILE} does not exist")
             elif self.YEEDU_AIRFLOW_VERIFY_SSL == 'false':
-                self.log.info("YEEDU_AIRFLOW_VERIFY_SSL False")
+                self.log.info(
+                    "SSL verification is disabled, as YEEDU_AIRFLOW_VERIFY_SSL is set to false")
                 return False
 
             else:
                 self.log.error(
-                    f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {self.YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
+                    f"Invalid value for YEEDU_AIRFLOW_VERIFY_SSL: '{self.YEEDU_AIRFLOW_VERIFY_SSL}'. Must be 'true' or 'false'")
                 raise AirflowException(
-                    f"Provided YEEDU_AIRFLOW_VERIFY_SSL: {self.YEEDU_AIRFLOW_VERIFY_SSL} is neither true/false")
+                    f"Invalid value for YEEDU_AIRFLOW_VERIFY_SSL: '{self.YEEDU_AIRFLOW_VERIFY_SSL}'. Must be 'true' or 'false'")
 
         except Exception as e:
-            self.log.error(f"Check SSL failed due to: {e}")
+            self.log.error(f"SSL verification configuration failed: {e}")
             raise AirflowException(e)
 
     def get_auth_details(self):
@@ -173,22 +174,21 @@ class YeeduHook(BaseHook):
 
                 else:
                     attempts_failure += 1
-                    self.log.info(
-                        f"API request failed with status {response.status_code} and message: {response.text} - (attempt {attempts_failure}/{max_attempts})")
-                    self.log.info(
-                        f"Sleeping for {delay} seconds before retrying...")
+                    self.log.warning(
+                        f"API request failed with status {response.status_code}: {response.text} (attempt {attempts_failure}/{max_attempts})")
+                    self.log.info(f"Retrying in {delay} seconds...")
                     time.sleep(delay)
 
             except Exception as e:
                 attempts_failure += 1
-                self.log.error(
-                    f"Request failed due to exception: {e} - (attempt {attempts_failure}/{max_attempts})")
+                self.log.warning(
+                    f"API request failed due to exception: {e} (attempt {attempts_failure}/{max_attempts})")
                 self.log.info(
-                    f"Sleeping for {delay} seconds before retrying...")
+                    f"Retrying in {delay} seconds...")
                 time.sleep(delay)
 
         raise AirflowException(
-            f"Continuous API failure reached the threshold after multiple attempts - {response.text}")
+            f"API request failed after {max_attempts} attempts: {response.text}")
 
     def check_token(self):
         """
@@ -202,7 +202,7 @@ class YeeduHook(BaseHook):
             return False
 
     def get_token(self):
-        """self.tenant_id
+        """
         Retrieves the token from Airflow Variables.
 
         :return: The token value if available, or None if not found.
@@ -212,8 +212,10 @@ class YeeduHook(BaseHook):
             token = Variable.get(self.token_variable_name, default_var=None)
             return token
         except Exception as e:
-            self.log.info(f"Please provide valid block name: {e}")
-            raise ValueError(e)
+            self.log.error(
+                f"Failed to retrieve token from variable '{self.token_variable_name}': {str(e)}")
+            raise ValueError(
+                f"Failed to retrieve authentication token: {str(e)}")
 
     def get_auth_type(self):
         """
@@ -225,12 +227,12 @@ class YeeduHook(BaseHook):
         try:
             auth_url = self.base_url+'login/auth_type'
             auth_response = self._api_request('GET', auth_url)
-            self.log.info(
-                f"auth_type: {auth_response.json().get('auth_type')}")
+            self.log.debug(
+                f"Authentication type: {auth_response.json().get('auth_type')}")
             return auth_response.json().get('auth_type')
 
         except Exception as e:
-            self.log.error(f"An error occurred in getting auth_type: {e}")
+            self.log.error(f"Failed to retrieve authentication type: {e}")
             raise AirflowException(e)
 
     def yeedu_login(self, context):
@@ -275,7 +277,7 @@ class YeeduHook(BaseHook):
                 raise AirflowException(
                     f"The current AirflowOperator only supports LDAP, AAD, and Azure_SSO authentication types, but received {auth_type}.")
         except Exception as e:
-            self.log.info(f"An error occurred during yeedu_login: {e}")
+            self.log.error(f"Login to Yeedu failed: {e}")
             raise AirflowException(e)
 
     def yeedu_logout(self, context):
@@ -288,14 +290,14 @@ class YeeduHook(BaseHook):
 
             if logout_response.status_code == 200:
                 self.log.info(
-                    f'Status Code: {logout_response.status_code}')
-                self.log.info(
-                    f'{logout_response.text}')
+                    f'Successfully logged out (Status Code: {logout_response.status_code})')
+                self.log.debug(
+                    f'Logout response: {logout_response.text}')
                 return 0
             else:
                 raise AirflowException(logout_response.text)
         except Exception as e:
-            self.log.info(f"An error occurred during yeedu_logout: {e}")
+            self.log.error(f"Logout from Yeedu failed: {e}")
             raise AirflowException(e)
 
     def associate_tenant(self):
@@ -314,9 +316,9 @@ class YeeduHook(BaseHook):
 
             if tenant_associate_response.status_code == 201:
                 self.log.info(
-                    f'Tenant associated successfully. Status Code: {tenant_associate_response.status_code}')
-                self.log.info(
-                    f'Tenant Association Response: {tenant_associate_response.json()}')
+                    f"Tenant '{self.tenant_id}' associated successfully")
+                self.log.debug(
+                    f'Tenant association response: {tenant_associate_response.json()}')
                 return 0
             else:
                 raise AirflowException(tenant_associate_response.text)
@@ -327,11 +329,11 @@ class YeeduHook(BaseHook):
                 f"Association to the tenant Id: {self.tenant_id}" in error_text and
                 "is not allowed for the current session." in error_text
             ):
-                self.log.warning(
-                    f"Tenant association skipped: {error_text} as it is already associated"
+                self.log.info(
+                    f"Tenant '{self.tenant_id}' is already associated with the current session"
                 )
                 return 0
-            self.log.info(f"An error occurred during associate_tenant: {e}")
+            self.log.error(f"Failed to associate tenant: {e}")
             raise AirflowException(e)
 
     def yeedu_health_check(self) -> int:
@@ -388,7 +390,8 @@ class YeeduHook(BaseHook):
                 f'workspace/{self.workspace_id}/spark/job/run/{run_id}'
             return self._api_request('GET', job_status_url)
         except Exception as e:
-            self.log.info(f"An error occurred during fetching job_status: {e}")
+            self.log.error(
+                f"Failed to retrieve status for job run ID {run_id}: {e}")
             raise AirflowException(e)
 
     def get_job_logs(self, run_id: int, log_type: str) -> str:
@@ -413,11 +416,12 @@ class YeeduHook(BaseHook):
         try:
             job_kill_url = self.base_url + \
                 f'workspace/{self.workspace_id}/spark/job/run/stop/{run_id}'
-            self.log.info(f"Stopping job of Job Id {run_id}")
+            self.log.info(f"Attempting to stop job with run ID {run_id}")
             response = self._api_request('POST', job_kill_url)
             if response.status_code == 201:
-                self.log.info(f"Stopped the Job with Job Id {run_id}")
+                self.log.info(f"Successfully stopped job with run ID {run_id}")
         except Exception as e:
+            self.log.error(f"Failed to stop job with run ID {run_id}: {e}")
             raise AirflowException(e)
 
     def wait_for_completion(self, run_id: int) -> str:
@@ -436,13 +440,14 @@ class YeeduHook(BaseHook):
                     # check job_status
                     response: requests.Response = self.get_job_status(run_id)
                     api_status_code: int = response.status_code
-                    self.log.info(
-                        f"Current API Status Code: {api_status_code}")
+                    self.log.debug(
+                        f"Job status API response code: {api_status_code}")
 
                     if api_status_code == 200:
 
                         job_status: str = response.json().get('run_status')
-                        self.log.info(f"Current Job Status: {job_status}")
+                        self.log.info(
+                            f"Run ID {run_id} status: {job_status}")
                         if job_status in ['DONE', 'ERROR', 'TERMINATED', 'KILLED', 'STOPPED']:
                             return job_status
                     else:
@@ -451,8 +456,10 @@ class YeeduHook(BaseHook):
 
                 except Exception as e:
                     raise AirflowException(
-                        f"API failure while waiting for job completion: {e}")
+                        f"Error while checking job status: {e}")
 
         except Exception as e:
+            self.log.error(
+                f"Error while waiting for job completion: {e}")
             raise AirflowException(
-                f"An error occurred while waiting for job completion: {e}")
+                f"Error while waiting for job completion: {e}")

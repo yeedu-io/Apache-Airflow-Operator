@@ -79,8 +79,10 @@ class YeeduJobRunOperator:
             self.log.info("Stopping job in finally")
             job_status = self.hook.get_job_status(
                 run_id).json().get("run_status")
+
             if job_status not in ["ERROR", "TERMINATED", "KILLED", "STOPPED", "DONE"]:
                 self.hook.kill_job(run_id)
+
             # Only logout for LDAP or AAD
             try:
                 auth_type = self.hook.get_auth_type()
@@ -88,3 +90,12 @@ class YeeduJobRunOperator:
                     self.hook.yeedu_logout(context)
             except Exception as e:
                 self.log.warning(f"Logout skipped or failed: {e}")
+
+            # Close HTTP session if it exists
+            if hasattr(self, 'hook') and hasattr(self.hook, 'session'):
+                try:
+                    self.hook.session.close()
+                    self.log.info("HTTP session closed in finally block.")
+                except Exception as session_close_error:
+                    self.log.warning(
+                        f"Failed to close HTTP session: {session_close_error}")
