@@ -26,6 +26,8 @@ class YeeduNotebookRunOperator:
         connection_id,
         token_variable_name,
         restapi_port,
+        arguments,
+        conf,
         logger=None,
         *args,
         **kwargs,
@@ -38,6 +40,8 @@ class YeeduNotebookRunOperator:
         self.connection_id = connection_id
         self.token_variable_name = token_variable_name
         self.restapi_port = restapi_port
+        self.arguments = arguments
+        self.conf = conf
         self.notebook_cells = {}
         self.notebook_executed = True
         self.run_id = None
@@ -60,9 +64,16 @@ class YeeduNotebookRunOperator:
 
     def create_notebook_instance(self):
         try:
+            data = {
+                'notebook_id': self.notebook_id
+            }
+            if self.arguments:
+                data['arguments'] = self.arguments
+            if self.conf:
+                data['conf'] = self.conf
             post_url = self.base_url + \
                 f'workspace/{self.workspace_id}/notebook/run'
-            data = {'notebook_id': self.notebook_id}
+            data = data
 
             response = self.hook._api_request("POST", post_url, data)
 
@@ -1092,6 +1103,15 @@ class YeeduNotebookRunOperator:
         try:
             signal.signal(signal.SIGINT, self.signal_handler)
             signal.signal(signal.SIGTERM, self.signal_handler)
+
+            ti = context["ti"]
+
+            if self.conf is None:
+                self.conf = []
+
+            self.conf.append(f"spark.yeedu.dag_id={ti.dag_id}")
+            self.conf.append(f"spark.yeedu.dag_run_id={ti.run_id}")
+            self.conf.append(f"spark.yeedu.task_id={ti.task_id}")
 
             self.hook.yeedu_login(context)
             self.create_notebook_instance()
