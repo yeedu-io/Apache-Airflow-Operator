@@ -153,6 +153,7 @@ class YeeduHook(BaseHook):
         :raises AirflowException: If continuous request failures reach the threshold.
         """
         attempts_failure: int = 0
+        response = None
 
         # Ensure session headers are up to date before each request
         if self.auth_token and 'Authorization' not in self.session.headers:
@@ -187,8 +188,11 @@ class YeeduHook(BaseHook):
                     f"Retrying in {delay} seconds...")
                 time.sleep(delay)
 
-        raise AirflowException(
-            f"API request failed after {max_attempts} attempts: {response.text}")
+        error_message = f"API request failed after {max_attempts} attempts"
+        if response is not None:
+            error_message += f": {response.text}"
+
+        raise AirflowException(error_message)
 
     def check_token(self):
         """

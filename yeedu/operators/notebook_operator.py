@@ -809,6 +809,8 @@ class YeeduNotebookRunOperator:
                             self.log.debug(
                                 f"Socket shutdown raised an expected error: {e}")
                     ws.close()
+                    # Wait a moment for clean closure to complete
+                    time.sleep(1)
                     self.log.debug("WebSocket socket successfully closed")
                 except Exception as e:
                     # Socket might already be closed, which is fine
@@ -834,6 +836,8 @@ class YeeduNotebookRunOperator:
                             self.log.debug(
                                 f"Socket shutdown raised an expected error: {e}")
                     self.ws.close()
+                    # Wait a moment for clean closure to complete
+                    time.sleep(1)
                     self.log.info("WebSocket connection closed")
                 except Exception as e:
                     self.log.warning(f"Error during WebSocket closure: {e}")
@@ -1085,6 +1089,8 @@ class YeeduNotebookRunOperator:
             try:
                 # Close the WebSocket connection
                 self.close_websocket_connection()
+                # Wait a moment to ensure cleanup is complete
+                time.sleep(1)
                 self.log.info("WebSocket connection closed.")
 
             except Exception as e:
