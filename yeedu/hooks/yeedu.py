@@ -69,6 +69,9 @@ class YeeduHook(BaseHook):
             'YEEDU_AIRFLOW_VERIFY_SSL', 'true')
         self.session = requests.Session()
         self.session.verify = self.check_ssl()
+        self.yeedu_auth_type = None
+        # Default request timeout (connect, read)
+        self.request_timeout = (30, 120)
         self._headers: dict = {
             'accept': 'application/json',
             'Content-Type': 'application/json'
@@ -165,10 +168,10 @@ class YeeduHook(BaseHook):
                 # Make the HTTP request
                 if method == 'POST':
                     response = self.session.post(
-                        url, headers=self.get_headers(), json=data, params=params)
+                        url, headers=self.get_headers(), json=data, params=params, timeout=self.request_timeout)
                 else:
                     response = self.session.get(
-                        url, headers=self.get_headers(), json=data, params=params)
+                        url, headers=self.get_headers(), json=data, params=params, timeout=self.request_timeout)
 
                 if response.status_code in [200, 201, 409]:
                     return response
@@ -188,6 +191,15 @@ class YeeduHook(BaseHook):
                     f"Retrying in {delay} seconds...")
                 time.sleep(delay)
 
+            finally:
+                if response is not None:
+                    try:
+                        self.log.debug(f"Closing response for url: {url}")
+                        response.close()
+                    except Exception as e:
+                        self.log.debug(
+                            f"Closing response failed for url: {url} with exception: {e}")
+                        pass
         error_message = f"API request failed after {max_attempts} attempts"
         if response is not None:
             error_message += f": {response.text}"

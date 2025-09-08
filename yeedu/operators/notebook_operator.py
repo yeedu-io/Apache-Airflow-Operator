@@ -154,9 +154,17 @@ class YeeduNotebookRunOperator:
                 remaining_time = max_wait_time - elapsed_time
 
                 try:
+
+                    # Stop after max_wait_time (5 minutes)
+                    if remaining_time <= 0:
+                        raise AirflowException(
+                            f"Notebook did not reach RUNNING state within {int(max_wait_time)} seconds. "
+                            f"Last known status: {self.check_notebook_instance_status()}"
+                        )
+
                     # Use the hook's session and headers
-                    response = self.hook.session.get(
-                        url, headers=self.hook.get_headers(), params=get_params)
+                    response = self.hook._api_request(
+                        "GET", url, params=get_params)
                     status_code = response.status_code
                     self.log.debug(
                         f"Get Active Notebooks - Status Code: {status_code}")
@@ -1101,6 +1109,8 @@ class YeeduNotebookRunOperator:
             try:
                 # Explicitly close all session connections
                 self.hook.session.close()
+                # Wait a moment to ensure cleanup is complete
+                time.sleep(1)
                 self.log.info("HTTP session closed.")
             except Exception as e:
                 self.log.warning(f"Failed to close HTTP session: {e}")
