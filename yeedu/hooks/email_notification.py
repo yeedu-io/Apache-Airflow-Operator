@@ -4,7 +4,7 @@ import os
 import requests
 from airflow.hooks.base import BaseHook
 
-class GraphApiHook(BaseHook):
+class EmailNotificationHook(BaseHook):
     """
     A hook that sends emails via Microsoft Graph API.  Credentials are loaded from
     environment variables.  Recipients can be passed as a string or list of strings.
