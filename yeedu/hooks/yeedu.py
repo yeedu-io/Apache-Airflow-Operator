@@ -70,11 +70,12 @@ class YeeduHook(BaseHook):
         self.session = requests.Session()
         self.session.verify = self.check_ssl()
         self.yeedu_auth_type = None
-        # Default request timeout (connect, read)
-        self.request_timeout = (30, 120)
+        self.request_timeout = (30, 60)  # 30 seconds connect, 60 seconds reads
+        # Always include Connection: close in default headers to prevent CLOSE_WAIT issues
         self._headers: dict = {
             'accept': 'application/json',
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'Connection': 'close'
         }
         self.auth_token = None
 
@@ -144,7 +145,7 @@ class YeeduHook(BaseHook):
             raise AirflowException(
                 f"The current AirflowOperator only supports LDAP, AAD, and Azure_SSO authentication types, but received {auth_type}.")
 
-    def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None, max_attempts: int = 5, delay: int = 20) -> requests.Response:
+    def _api_request(self, method: str, url: str, data=None, params: Optional[Dict] = None, max_attempts: int = 5, delay: int = 20, skip_retry: bool = False) -> requests.Response:
         """
         Makes an HTTP request to the Yeedu API with retries.
 
@@ -152,6 +153,9 @@ class YeeduHook(BaseHook):
         :param url: The URL of the API endpoint.
         :param data: The JSON data for the request.
         :param params: Optional dictionary of query parameters.
+        :param max_attempts: Maximum number of retry attempts.
+        :param delay: Delay between retries in seconds.
+        :param skip_retry: If True, skip the retry logic and return the response directly.
         :return: The API response.
         :raises AirflowException: If continuous request failures reach the threshold.
         """
@@ -163,48 +167,61 @@ class YeeduHook(BaseHook):
             self.session.headers.update(
                 {'Authorization': f"Bearer {self.auth_token}"})
 
-        while attempts_failure < max_attempts:
-            try:
-                # Make the HTTP request
-                if method == 'POST':
-                    response = self.session.post(
-                        url, headers=self.get_headers(), json=data, params=params, timeout=self.request_timeout)
-                else:
-                    response = self.session.get(
-                        url, headers=self.get_headers(), json=data, params=params, timeout=self.request_timeout)
+        try:
+            # Single attempt if skip_retry is True
+            if skip_retry:
+                response = self.session.request(
+                    method=method,
+                    url=url,
+                    headers=self.get_headers(),
+                    json=data,
+                    params=params,
+                    timeout=self.request_timeout
+                )
+                # Force-load content to ensure the connection completes
+                _ = response.content
+                return response
 
-                if response.status_code in [200, 201, 409]:
-                    return response
+            # Normal retry logic
+            while attempts_failure < max_attempts:
+                try:
+                    response = self.session.request(
+                        method=method,
+                        url=url,
+                        headers=self.get_headers(),
+                        json=data,
+                        params=params,
+                        timeout=self.request_timeout
+                    )
 
-                else:
+                    # Force-load content to ensure the connection completes
+                    _ = response.content
+
+                    if response.status_code in [200, 201, 409]:
+                        return response
+                    else:
+                        attempts_failure += 1
+                        self.log.warning(
+                            f"API request failed with status {response.status_code}: {response.text} (attempt {attempts_failure}/{max_attempts})")
+
+                        self.log.info(f"Retrying in {delay} seconds...")
+                        time.sleep(delay)
+
+                except Exception as e:
                     attempts_failure += 1
                     self.log.warning(
-                        f"API request failed with status {response.status_code}: {response.text} (attempt {attempts_failure}/{max_attempts})")
+                        f"API request failed due to exception: {e} (attempt {attempts_failure}/{max_attempts})")
                     self.log.info(f"Retrying in {delay} seconds...")
                     time.sleep(delay)
 
-            except Exception as e:
-                attempts_failure += 1
-                self.log.warning(
-                    f"API request failed due to exception: {e} (attempt {attempts_failure}/{max_attempts})")
-                self.log.info(
-                    f"Retrying in {delay} seconds...")
-                time.sleep(delay)
+            error_message = f"API request failed after {max_attempts} attempts"
+            if response is not None:
+                error_message += f": {response.text}"
 
-            finally:
-                if response is not None:
-                    try:
-                        self.log.debug(f"Closing response for url: {url}")
-                        response.close()
-                    except Exception as e:
-                        self.log.debug(
-                            f"Closing response failed for url: {url} with exception: {e}")
-                        pass
-        error_message = f"API request failed after {max_attempts} attempts"
-        if response is not None:
-            error_message += f": {response.text}"
+            raise AirflowException(error_message)
 
-        raise AirflowException(error_message)
+        except Exception as e:
+            raise AirflowException(f"API request error: {e}")
 
     def check_token(self):
         """

@@ -162,16 +162,20 @@ class YeeduNotebookRunOperator:
                             f"Last known status: {self.check_notebook_instance_status()}"
                         )
 
-                    # Use the hook's session and headers
+                    # Use the hook's _api_request but skip its retry logic
+                    # We're implementing our own retry logic in this function
                     response = self.hook._api_request(
-                        "GET", url, params=get_params)
+                        "GET", url, params=get_params, skip_retry=True)
+
                     status_code = response.status_code
                     self.log.debug(
                         f"Get Active Notebooks - Status Code: {status_code}")
+
                     if status_code == 200:
                         self.log.debug(
                             f"Get Active Notebooks - Response: {response.json()}")
                         return response.json()['data'][0]['run_id']
+
                     if status_code == 404:
                         self.log.info(
                             f"Notebook is not yet running. Retrying after {DELAY_SECONDS} seconds... "
@@ -189,6 +193,7 @@ class YeeduNotebookRunOperator:
                             )
                         attempts_failure = 0
                         continue
+
                     attempts_failure += 1
                     self.log.error(
                         f"Unexpected response status: {status_code} "
@@ -200,6 +205,7 @@ class YeeduNotebookRunOperator:
                         raise Exception(
                             f"Max retry attempts reached for status code {status_code}")
                     time.sleep(DELAY_SECONDS)
+
                 except AirflowException as e:
                     raise
                 except Exception as e:
@@ -213,6 +219,7 @@ class YeeduNotebookRunOperator:
                         raise Exception(
                             f"Continuous API failure reached the threshold after multiple attempts - {str(e)}")
                     time.sleep(DELAY_SECONDS)
+
         except Exception as e:
             self.log.error(
                 f"An error occurred during get_active_notebook_instances: {str(e)}")
