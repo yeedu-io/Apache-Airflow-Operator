@@ -19,15 +19,15 @@ class YeeduNotebookRunOperator:
 
     def __init__(
         self,
-        base_url,
-        workspace_id,
-        notebook_id,
-        tenant_id,
-        connection_id,
-        token_variable_name,
-        restapi_port,
-        arguments,
-        conf,
+        base_url: str,
+        workspace_id: int,
+        notebook_id: int,
+        tenant_id: str,
+        connection_id: str,
+        token_variable_name: str,
+        restapi_port: int,
+        arguments: str = None,
+        conf: list = None,
         logger=None,
         *args,
         **kwargs,
@@ -264,7 +264,7 @@ class YeeduNotebookRunOperator:
                 f"An error occurred while checking kernel status: {e}")
             raise e
 
-    def check_kernel_status(self, status):
+    def check_kernel_status(self, status: str) -> bool:
         return status in ["idle", "starting", "busy"]
 
     def get_websocket_token(self):

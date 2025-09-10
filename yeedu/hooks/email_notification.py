@@ -1,13 +1,15 @@
-# hooks/graph_api_hook.py
 import msal
 import os
 import requests
 from airflow.hooks.base import BaseHook
 
+
 class EmailNotificationHook(BaseHook):
     """
-    A hook that sends emails via Microsoft Graph API.  Credentials are loaded from
-    environment variables.  Recipients can be passed as a string or list of strings.
+    A hook that sends emails via Microsoft Graph API.
+
+    Credentials are loaded from environment variables.
+    Recipients can be passed as a string or list of strings.
     """
 
     def __init__(self):
@@ -15,8 +17,22 @@ class EmailNotificationHook(BaseHook):
         self.client_id = os.getenv("CLIENT_ID")
         self.client_secret = os.getenv("CLIENT_SECRET")
         self.sender = os.getenv("SENDER_EMAIL")
-        if not all([self.tenant_id, self.client_id, self.client_secret, self.sender]):
-            raise ValueError("One or more required environment variables are missing!")
+
+        # Check which variables are missing
+        missing_vars = []
+        if not self.tenant_id:
+            missing_vars.append("TENANT_ID")
+        if not self.client_id:
+            missing_vars.append("CLIENT_ID")
+        if not self.client_secret:
+            missing_vars.append("CLIENT_SECRET")
+        if not self.sender:
+            missing_vars.append("SENDER_EMAIL")
+
+        if missing_vars:
+            raise ValueError(
+                f"Required environment variables missing: {', '.join(missing_vars)}")
+
         self.api_url = "https://graph.microsoft.com/v1.0"
         self.token = self.get_oauth_token()
 
@@ -26,7 +42,8 @@ class EmailNotificationHook(BaseHook):
             authority=f"https://login.microsoftonline.com/{self.tenant_id}",
             client_credential=self.client_secret,
         )
-        token_response = app.acquire_token_for_client(scopes=["https://graph.microsoft.com/.default"])
+        token_response = app.acquire_token_for_client(
+            scopes=["https://graph.microsoft.com/.default"])
         if "access_token" not in token_response:
             raise Exception(
                 f"Failed to acquire access token: {token_response.get('error_description')}"

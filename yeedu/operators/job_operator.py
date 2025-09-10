@@ -52,7 +52,7 @@ class YeeduJobRunOperator:
             params = context.get("params", {}).get("input") or {}
             composite_key = f"{run_id}__{task_id}__{map_index}"
             ti.xcom_push(key=composite_key, value=params)
-            
+
             self.hook.yeedu_login(context)
             self.log.info("Job Id: %s", self.job_id)
             run_id = self.hook.submit_job(
