@@ -171,6 +171,15 @@ class YeeduOperator(BaseOperator):
         :param context: The execution context.
         :type context: dict
         """
+        ti = context['ti']
+        run_id = ti.run_id
+        map_index = ti.map_index
+        task_id = ti.task_id
+
+        params = context.get("params", {}).get("input") or {}
+        composite_key = f"{run_id}__{task_id}__{map_index}"
+        ti.xcom_push(key=composite_key, value=params)
+
         if self.job_type == "job":
             job_operator = YeeduJobRunOperator(
                 job_id=self.conf_id,

@@ -1124,6 +1124,15 @@ class YeeduNotebookRunOperator:
 
     def execute(self, context: dict):
         try:
+            ti = context['ti']
+            run_id = ti.run_id
+            map_index = ti.map_index
+            task_id = ti.task_id
+
+            params = context.get("params", {}).get("input") or {}
+            composite_key = f"{run_id}__{task_id}__{map_index}"
+            ti.xcom_push(key=composite_key, value=params)
+
             signal.signal(signal.SIGINT, self.signal_handler)
             signal.signal(signal.SIGTERM, self.signal_handler)
 
