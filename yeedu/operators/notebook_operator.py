@@ -59,7 +59,6 @@ class YeeduNotebookRunOperator:
             connection_id=self.connection_id,
             token_variable_name=self.token_variable_name,
         )
-        self.timeout = (30, 60)
         self.log = logger
 
     def create_notebook_instance(self):
@@ -136,8 +135,9 @@ class YeeduNotebookRunOperator:
 
     def get_active_notebook_instances(self):
         TERMINAL_STATES = {"TERMINATED", "STOPPED", "ERROR"}
-        MAX_ATTEMPTS = 60
-        DELAY_SECONDS = 5
+        MAX_FAILURE_REATTEMPTS = 10
+        FAILURE_REATTEMPT_DELAY_SECONDS = 30
+        NOTEBOOK_GET_STATUS_DELAY_SECONDS = 10
         get_params = {
             "notebook_ids": self.notebook_id,
             "run_status": "RUNNING",
@@ -146,22 +146,9 @@ class YeeduNotebookRunOperator:
         url = f"{self.base_url}workspace/{self.workspace_id}/notebook/runs"
         attempts_failure = 0
         start_time = time.time()
-        max_wait_time = MAX_ATTEMPTS * DELAY_SECONDS
-
         try:
             while True:
-                elapsed_time = time.time() - start_time
-                remaining_time = max_wait_time - elapsed_time
-
                 try:
-
-                    # Stop after max_wait_time (5 minutes)
-                    if remaining_time <= 0:
-                        raise AirflowException(
-                            f"Notebook did not reach RUNNING state within {int(max_wait_time)} seconds. "
-                            f"Last known status: {self.check_notebook_instance_status()}"
-                        )
-
                     # Use the hook's _api_request but skip its retry logic
                     # We're implementing our own retry logic in this function
                     response = self.hook._api_request(
@@ -178,9 +165,9 @@ class YeeduNotebookRunOperator:
 
                     if status_code == 404:
                         self.log.info(
-                            f"Notebook is not yet running. Retrying after {DELAY_SECONDS} seconds... "
-                            f"(Elapsed: {int(elapsed_time)}s, Remaining: {int(remaining_time)}s) ")
-                        time.sleep(DELAY_SECONDS)
+                            f"Notebook is not yet running. Retrying after {NOTEBOOK_GET_STATUS_DELAY_SECONDS} seconds... "
+                        )
+                        time.sleep(NOTEBOOK_GET_STATUS_DELAY_SECONDS)
                         notebook_status = self.check_notebook_instance_status()
                         if notebook_status in TERMINAL_STATES:
                             notebook_run_url = (
@@ -197,28 +184,28 @@ class YeeduNotebookRunOperator:
                     attempts_failure += 1
                     self.log.error(
                         f"Unexpected response status: {status_code} "
-                        f"(attempt {attempts_failure}/{MAX_ATTEMPTS})"
+                        f"(attempt {attempts_failure}/{MAX_FAILURE_REATTEMPTS})"
                     )
                     self.log.info(
-                        f"Sleeping for {DELAY_SECONDS} seconds before retrying...")
-                    if attempts_failure >= MAX_ATTEMPTS:
+                        f"Sleeping for {FAILURE_REATTEMPT_DELAY_SECONDS} seconds before retrying...")
+                    if attempts_failure >= MAX_FAILURE_REATTEMPTS:
                         raise Exception(
                             f"Max retry attempts reached for status code {status_code}")
-                    time.sleep(DELAY_SECONDS)
+                    time.sleep(FAILURE_REATTEMPT_DELAY_SECONDS)
 
                 except AirflowException as e:
                     raise
                 except Exception as e:
                     attempts_failure += 1
                     self.log.error(
-                        f"Request failed due to exception (attempt {attempts_failure}/{MAX_ATTEMPTS}): {str(e)}"
+                        f"Request failed due to exception (attempt {attempts_failure}/{MAX_FAILURE_REATTEMPTS}): {str(e)}"
                     )
                     self.log.info(
-                        f"Sleeping for {DELAY_SECONDS} seconds before retrying...")
-                    if attempts_failure >= MAX_ATTEMPTS:
+                        f"Sleeping for {FAILURE_REATTEMPT_DELAY_SECONDS} seconds before retrying...")
+                    if attempts_failure >= MAX_FAILURE_REATTEMPTS:
                         raise Exception(
                             f"Continuous API failure reached the threshold after multiple attempts - {str(e)}")
-                    time.sleep(DELAY_SECONDS)
+                    time.sleep(FAILURE_REATTEMPT_DELAY_SECONDS)
 
         except Exception as e:
             self.log.error(
@@ -1136,8 +1123,6 @@ class YeeduNotebookRunOperator:
             signal.signal(signal.SIGINT, self.signal_handler)
             signal.signal(signal.SIGTERM, self.signal_handler)
 
-            ti = context["ti"]
-
             if self.conf is None:
                 self.conf = []
 
@@ -1267,9 +1252,9 @@ class YeeduNotebookRunOperator:
                     self.exit_notebook(f"Exiting notebook from finally block.")
             # Only logout for LDAP or AAD
             try:
-                auth_type = self.hook.get_auth_type()
+                auth_type = self.hook.yeedu_auth_type
                 if auth_type in ["LDAP", "AAD"]:
-                    self.hook.yeedu_logout(context)
+                    self.hook.yeedu_logout()
             except Exception as e:
                 self.log.warning(f"Logout skipped or failed: {e}")
 

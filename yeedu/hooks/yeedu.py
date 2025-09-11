@@ -133,11 +133,11 @@ class YeeduHook(BaseHook):
             if not username or not password:
                 raise AirflowException(
                     f"Username or password is not set in the connection '{self.connection_id}'")
-            return username, password, None
+            return auth_type, username, password, None
         elif auth_type == 'AZURE_SSO':
             if self.check_token():
                 token = self.get_token()
-                return None, None, token
+                return auth_type, None, None, token
             else:
                 raise AirflowException(
                     "The authentication type is set to Azure_SSO. Please provide a token to schedule jobs or notebooks.")
@@ -260,9 +260,10 @@ class YeeduHook(BaseHook):
         try:
             auth_url = self.base_url+'login/auth_type'
             auth_response = self._api_request('GET', auth_url)
+            self.yeedu_auth_type = auth_response.json().get('auth_type')
             self.log.debug(
-                f"Authentication type: {auth_response.json().get('auth_type')}")
-            return auth_response.json().get('auth_type')
+                f"Authentication type: {self.yeedu_auth_type}")
+            return self.yeedu_auth_type
 
         except Exception as e:
             self.log.error(f"Failed to retrieve authentication type: {e}")
@@ -276,8 +277,7 @@ class YeeduHook(BaseHook):
         :raises AirflowException: If there is an issue during the login process or if an unsupported auth type is returned.
         """
         try:
-            auth_type = self.get_auth_type()
-            username, password, token = self.get_auth_details()
+            auth_type, username, password, token = self.get_auth_details()
             if auth_type in ['LDAP', 'AAD']:
                 login_url = self.base_url+'login'
 
@@ -313,7 +313,7 @@ class YeeduHook(BaseHook):
             self.log.error(f"Login to Yeedu failed: {e}")
             raise AirflowException(e)
 
-    def yeedu_logout(self, context):
+    def yeedu_logout(self):
         try:
             # Construct the logout URL
             logout_url = self.base_url+'logout'

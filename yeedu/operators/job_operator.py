@@ -94,9 +94,9 @@ class YeeduJobRunOperator:
 
             # Only logout for LDAP or AAD
             try:
-                auth_type = self.hook.get_auth_type()
+                auth_type = self.hook.yeedu_auth_type
                 if auth_type in ["LDAP", "AAD"]:
-                    self.hook.yeedu_logout(context)
+                    self.hook.yeedu_logout()
             except Exception as e:
                 self.log.warning(f"Logout skipped or failed: {e}")
 
