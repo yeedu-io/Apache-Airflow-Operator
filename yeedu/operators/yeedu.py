@@ -28,12 +28,14 @@ from urllib.parse import urlparse
 
 
 class YeeduOperator(BaseOperator):
+    template_fields = ("loop_input",)
     def __init__(
         self,
         job_url: str,
         connection_id: str,
         token_variable_name: str = None,
         arguments: str = None,
+        loop_input: str = None,
         conf: List[str] = None,
         *args,
         **kwargs
@@ -88,6 +90,7 @@ class YeeduOperator(BaseOperator):
         self.connection_id = connection_id
         self.token_variable_name = token_variable_name
         self.arguments = arguments
+        self.loop_input = loop_input
         (
             self.base_url,
             self.tenant_id,
@@ -176,9 +179,14 @@ class YeeduOperator(BaseOperator):
         map_index = ti.map_index
         task_id = ti.task_id
 
-        params = context.get("params", {}).get("input") or {}
         composite_key = f"{run_id}__{task_id}__{map_index}"
-        ti.xcom_push(key=composite_key, value=params)
+
+        # Convert to str if needed
+        value = self.loop_input
+        if not isinstance(value, (str, int, float, dict, list)):
+            value = str(value)
+
+        ti.xcom_push(key=composite_key, value=value)
 
         if self.job_type == "job":
             job_operator = YeeduJobRunOperator(
