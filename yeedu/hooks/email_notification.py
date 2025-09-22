@@ -13,10 +13,10 @@ class EmailNotificationHook(BaseHook):
     """
 
     def __init__(self):
-        self.tenant_id = os.getenv("TENANT_ID")
-        self.client_id = os.getenv("CLIENT_ID")
-        self.client_secret = os.getenv("CLIENT_SECRET")
-        self.sender = os.getenv("SENDER_EMAIL")
+        self.tenant_id = os.getenv("AIRFLOW_VAR_TENANT_ID")
+        self.client_id = os.getenv("AIRFLOW_VAR_CLIENT_ID")
+        self.client_secret = os.getenv("AIRFLOW_VAR_CLIENT_SECRET")
+        self.sender = os.getenv("AIRFLOW_VAR_SENDER_EMAIL")
 
         # Check which variables are missing
         missing_vars = []
