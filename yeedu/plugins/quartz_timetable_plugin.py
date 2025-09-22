@@ -1,6 +1,6 @@
 from airflow.plugins_manager import AirflowPlugin
 from airflow.timetables.base import Timetable
-from yeedu.plugins.quartz_timetable import QuartzTimetable
+from quartz_timetable import QuartzTimetable
 
 
 class QuartzTimetablePlugin(AirflowPlugin):
