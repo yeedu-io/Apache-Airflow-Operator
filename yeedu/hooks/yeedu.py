@@ -496,3 +496,19 @@ class YeeduHook(BaseHook):
                 f"Error while waiting for job completion: {e}")
             raise AirflowException(
                 f"Error while waiting for job completion: {e}")
+
+    def get_user_info(self) -> requests.Response:
+        """
+        Retrieves information about the currently authenticated user.
+
+        :return: The API response containing user information.
+        :raises AirflowException: If there is an issue retrieving user information.
+        """
+        try:
+            user_info_url: str = self.base_url + 'user/info'
+            self.log.debug(f"Retrieving user info from {user_info_url}")
+            response = self._api_request('GET', user_info_url)
+            return response
+        except Exception as e:
+            self.log.error(f"Failed to retrieve user info: {e}")
+            raise AirflowException(e)
