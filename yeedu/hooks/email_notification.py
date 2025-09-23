@@ -2,6 +2,7 @@ import msal
 import os
 import requests
 from airflow.hooks.base import BaseHook
+from airflow.models import Variable
 
 
 class EmailNotificationHook(BaseHook):
@@ -13,10 +14,10 @@ class EmailNotificationHook(BaseHook):
     """
 
     def __init__(self):
-        self.tenant_id = os.getenv("AIRFLOW_VAR_TENANT_ID")
-        self.client_id = os.getenv("AIRFLOW_VAR_CLIENT_ID")
-        self.client_secret = os.getenv("AIRFLOW_VAR_CLIENT_SECRET")
-        self.sender = os.getenv("AIRFLOW_VAR_SENDER_EMAIL")
+        self.tenant_id = Variable.get("AIRFLOW_VAR_TENANT_ID")
+        self.client_id = Variable.get("AIRFLOW_VAR_CLIENT_ID")
+        self.client_secret = Variable.get("AIRFLOW_VAR_CLIENT_SECRET")
+        self.sender = Variable.get("AIRFLOW_VAR_SENDER_EMAIL")
 
         # Check which variables are missing
         missing_vars = []
