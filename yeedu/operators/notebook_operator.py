@@ -416,6 +416,7 @@ class YeeduNotebookRunOperator:
                 cell_metadata.pop("startTime", None)
                 cell_metadata.pop("endTime", None)
                 cell_metadata.pop("lastRunTime", None)
+                cell_metadata.pop("runBy", None)
                 cell["metadata"] = cell_metadata
 
             self.log.info(
@@ -457,6 +458,7 @@ class YeeduNotebookRunOperator:
                 return
 
             msg_id_to_update = self.cell_output_data[0]["msg_id"]
+            run_by_user = self.hook.get_user_info().json()
             skip_outputs = False
             MAX_JSON_SIZE = 30 * 1024 * 1024  # 30 MB
             for cell in self.notebook_json["cells"]:
@@ -474,6 +476,7 @@ class YeeduNotebookRunOperator:
                     if end_time:
                         cell["metadata"]["endTime"] = end_time
                     cell["metadata"]["lastRunTime"] = run_time
+                    cell["metadata"]["runBy"] = run_by_user.get('username', '')
                     if not skip_outputs:
                         cell["outputs"] = copy.deepcopy(self.cell_output_data)
 
