@@ -585,8 +585,6 @@ class YeeduNotebookRunOperator:
 
             if msg_type == "execute_result":
                 content = response.get("content", {})
-                self.log.debug(
-                    f"Execute result content of message id: ({msg_id}) - {content}")
                 plain_data = content.get("data", {}).get("text/plain", "")
                 html_data = content.get("data", {}).get("text/html", "")
                 image_data = content.get("data", {}).get("image/png")
@@ -648,7 +646,7 @@ class YeeduNotebookRunOperator:
                     timespec='milliseconds').replace('+00:00', 'Z')
                 self.execution_times[msg_id] = {"startTime": start_time}
                 self.log.debug(
-                    f"Started code cell execution for message id ({msg_id}):\n{code_input} ")
+                    f"Started code cell execution for message id ({msg_id}) ")
 
             elif msg_type == "stream":
                 content = response.get("content", {})
@@ -664,7 +662,6 @@ class YeeduNotebookRunOperator:
 
             elif msg_type == "display_data":
                 content = response.get("content", {})
-                self.log.debug(f"Display Data: {content}")
                 img_resp = response.get("content", {}).get(
                     "data", {}).get("image/png")
                 text_resp = (
@@ -709,9 +706,6 @@ class YeeduNotebookRunOperator:
                 content = response.get("content", {})
                 self.content_status = content.get("status", "")
                 self.error_name = content.get("ename", "")
-
-                self.log.debug(
-                    f"Execute reply content for message id ({msg_id}) : {content}")
 
                 if self.content_status == "ok":
                     try:
@@ -811,8 +805,6 @@ class YeeduNotebookRunOperator:
                             self.log.debug(
                                 f"Socket shutdown raised an expected error: {e}")
                     ws.close()
-                    # Wait a moment for clean closure to complete
-                    time.sleep(1)
                     self.log.debug("WebSocket socket successfully closed")
                 except Exception as e:
                     # Socket might already be closed, which is fine
@@ -838,8 +830,6 @@ class YeeduNotebookRunOperator:
                             self.log.debug(
                                 f"Socket shutdown raised an expected error: {e}")
                     self.ws.close()
-                    # Wait a moment for clean closure to complete
-                    time.sleep(1)
                     self.log.info("WebSocket connection closed")
                 except Exception as e:
                     self.log.warning(f"Error during WebSocket closure: {e}")
@@ -1091,8 +1081,6 @@ class YeeduNotebookRunOperator:
             try:
                 # Close the WebSocket connection
                 self.close_websocket_connection()
-                # Wait a moment to ensure cleanup is complete
-                time.sleep(1)
                 self.log.info("WebSocket connection closed.")
 
             except Exception as e:
@@ -1103,8 +1091,6 @@ class YeeduNotebookRunOperator:
             try:
                 # Explicitly close all session connections
                 self.hook.session.close()
-                # Wait a moment to ensure cleanup is complete
-                time.sleep(1)
                 self.log.info("HTTP session closed.")
             except Exception as e:
                 self.log.warning(f"Failed to close HTTP session: {e}")
@@ -1242,7 +1228,6 @@ class YeeduNotebookRunOperator:
                     "ERROR",
                     "STOPPING"
                 ]:
-                    self.log.info("Exiting notebook from finally block.")
                     self.exit_notebook(f"Exiting notebook from finally block.")
             # Only logout for LDAP or AAD
             try:
