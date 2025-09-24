@@ -991,7 +991,6 @@ class YeeduNotebookRunOperator:
         # Connection test passed, proceed with actual connection
         self.log.info("Establishing persistent WebSocket connection...")
 
-        # Add ping_timeout and ping_interval to automatically detect dead connections
         self.ws = websocket.WebSocketApp(
             ws_url,
             on_open=self.on_open,
@@ -1010,16 +1009,13 @@ class YeeduNotebookRunOperator:
             else:
                 sslopt = {"cert_reqs": ssl.CERT_NONE}
 
-            # Add ping_timeout and ping_interval to detect dead connections
             self.ws.run_forever(
                 sslopt=sslopt,
-                reconnect=5,
-                ping_interval=30,  # Send a ping every 30 seconds
-                ping_timeout=10,   # If no pong received within 10 seconds, on_close will be triggered
+                reconnect=5
             )
 
         thread = threading.Thread(target=run_forever_in_thread)
-        thread.daemon = True  # Make thread daemon so it won't prevent process exit
+        thread.daemon = True
         thread.start()
         return self.ws
 

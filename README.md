@@ -157,8 +157,8 @@ Follow these steps to get your Yeedu jobs running in Airflow:
 
 1. **Install the package**: `pip3 install airflow-yeedu-operator`
 2. **Configure authentication**: Set up either the connection (for LDAP/AAD) or the token variable (for SSO)
-3. **Create your DAG file**: Copy and adapt the example code for your needs
-4. **Save the DAG**: Place it in the `dags/` folder of your Airflow installation
+3. **Create your DAG file**: Copy the example code from above and modify it for your specific use case
+4. **Deploy your DAG**: Place the DAG file in your Airflow DAGs folder or use the Airflow UI Code Editor
 5. **Verify configuration**: Ensure connections and variables are properly set
 6. **Run your DAG**: Trigger manually or let it run on schedule
 7. **Monitor execution**: Track progress in both Airflow UI and Yeedu UI
