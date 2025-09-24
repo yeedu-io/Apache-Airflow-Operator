@@ -30,7 +30,7 @@ class QuartzTimetable(Timetable):
 
     def infer_manual_data_interval(self, run_after: DateTime) -> DataInterval:
         anchor = run_after.in_timezone(self.tz)
-        return DataInterval(start=anchor, end=anchor.add(seconds=1))
+        return DataInterval(start=anchor.subtract(1), end=anchor)
 
     def next_dagrun_info(self, *, last_automated_data_interval: Optional[DataInterval], restriction: TimeRestriction) -> Optional[DagRunInfo]:
         tz = self.tz
