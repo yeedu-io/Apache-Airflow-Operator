@@ -177,7 +177,6 @@ The `YeeduOperator` supports additional parameters for more complex use cases:
 | ------------ | -------------------------------------------------------- | ------------------------------------------------------------- |
 | `arguments`  | Arguments to pass to the job run                         | `arguments="--input /data/input.csv --output /data/output"`   |
 | `conf`       | Configuration list for Spark job runs (key=value format) | `conf=["spark.driver.memory=4g", "spark.executor.memory=8g"]` |
-| `loop_input` | Data to pass to looping tasks                            | `loop_input="my_input_value"`                                 |
 
 ### Example with Advanced Configuration
 
@@ -198,6 +197,32 @@ spark_job_task = YeeduOperator(
     dag=dag,
 )
 ```
+
+
+### Looping / Dynamic Task Mapping
+
+The `YeeduOperator` also supports looping over inputs using **dynamic task mapping** in Airflow. This is useful when you want to run the same notebook or job multiple times with different inputs.
+
+### Example: Iterating Over Inputs
+
+```python
+workflow_notebook = YeeduOperator.partial(
+    task_id='workflow_notebook_iteration',
+    job_url='https://hostname:{restapi_port}/tenant/tenant_id/workspace/workspace_id/notebook/notebook_id',
+    connection_id='yeedu_connection',
+    max_active_tis_per_dag=1,
+    dag=dag,
+    trigger_rule=TriggerRule.ALL_SUCCESS
+).expand(
+    loop_input=['1', '2', '3', '4', '5']  # List of values to loop over
+)
+```
+
+### Explanation
+
+* `YeeduOperator.partial(...)`: Creates a template for the task.
+* `.expand(loop_input=[...])`: Dynamically generates multiple task instances with different `loop_input` values.
+* `max_active_tis_per_dag (optional)`: If you want to limit parallelism, set this parameter (e.g., max_active_tis_per_dag=2 to allow only 2 iterations at once).
 
 ---
 
