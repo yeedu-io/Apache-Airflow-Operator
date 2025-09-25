@@ -211,6 +211,8 @@ class EmailNotificationHook(BaseHook):
     def notify_task(
         self, recipients, task_id: str, run_id: str, status: str, context=None, extra_info=None
     ) -> None:
+        if not recipients: 
+            return None
         subject = f"Airflow Task {task_id} {status.capitalize()}"
         body = self._generate_html(
             task_id, run_id, status, is_dag=False, context=context, extra_info=extra_info
@@ -220,6 +222,8 @@ class EmailNotificationHook(BaseHook):
     def notify_dag(
         self, recipients, dag_id: str, run_id: str, status: str, context=None, extra_info=None
     ) -> None:
+        if not recipients: 
+            return None
         subject = f"Airflow DAG {dag_id} {status.capitalize()}"
         body = self._generate_html(
             dag_id, run_id, status, is_dag=True, context=context, extra_info=extra_info
