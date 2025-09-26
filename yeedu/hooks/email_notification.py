@@ -4,7 +4,6 @@ from airflow.hooks.base import BaseHook
 from airflow.models import Variable
 import re
 
-
 class EmailNotificationHook(BaseHook):
     """
     A hook that sends emails via Microsoft Graph API.
@@ -163,7 +162,7 @@ class EmailNotificationHook(BaseHook):
             if dag:
                 owner = getattr(dag, "owner", None) or dag.default_args.get("owner")
 
-            log_url = ti.log_url if ti else None
+            # log_url = ti.log_url if ti else None
             duration = (
                 str(ti.end_date - ti.start_date)
                 if ti and ti.start_date and ti.end_date
@@ -182,10 +181,10 @@ class EmailNotificationHook(BaseHook):
                 rows.append(
                     f"<tr><td style='padding:10px;font-weight:bold;'>Duration</td><td>{duration}</td></tr>"
                 )
-            if log_url:
-                rows.append(
-                    f"<tr><td style='padding:10px;font-weight:bold;'>Log URL</td><td><a href='{log_url}'>View Logs</a></td></tr>"
-                )
+            # if log_url:
+            #     rows.append(
+            #         f"<tr><td style='padding:10px;font-weight:bold;'>Log URL</td><td><a href='{log_url}'>View Logs</a></td></tr>"
+            #     )
 
         # Notebook URL (doc_md passed from DAG or task)
         if extra_info:
