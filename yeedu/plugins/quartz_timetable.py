@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
-from cron_descriptor import get_description
+from cron_descriptor import get_description, FormatException
 
 from calendar import monthrange
 
@@ -26,7 +26,18 @@ class QuartzTimetable(Timetable):
 
     @property
     def description(self) -> str:
-        return get_description(self.cron_expression)
+        try:
+            return get_description(self.cron_expression)
+        except (FormatException, ValueError) as e:
+            # Log the error for debugging
+            import logging
+            logging.warning(
+                "Failed to parse cron expression '%s' with cron_descriptor: %s",
+                self.cron_expression,
+                str(e),
+            )
+            # Return a safe fallback so Airflow doesn't crash
+            return f"Invalid or unsupported cron: {self.cron_expression}"
 
     def infer_manual_data_interval(self, run_after: DateTime) -> DataInterval:
         anchor = run_after.in_timezone(self.tz)
