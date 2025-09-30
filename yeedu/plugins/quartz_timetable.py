@@ -41,15 +41,14 @@ class QuartzTimetable(Timetable):
 
     def infer_manual_data_interval(self, run_after: DateTime) -> DataInterval:
         anchor = run_after.in_timezone(self.tz)
-        return DataInterval(start=anchor.subtract(1), end=anchor)
+        return DataInterval(start=anchor, end=anchor.add(seconds=1))
 
     def next_dagrun_info(self, *, last_automated_data_interval: Optional[DataInterval], restriction: TimeRestriction) -> Optional[DagRunInfo]:
         tz = self.tz
         now = pendulum.now(tz)
 
         # If last_automated_data_interval exists, continue from there; otherwise, use current time
-        anchor = last_automated_data_interval.end.in_timezone(
-            tz) if last_automated_data_interval else now
+        anchor = last_automated_data_interval.end.in_timezone(tz) if last_automated_data_interval else now
 
         # If catchup is False, we won't backfill or run the missed jobs.
         if not restriction.catchup and anchor < now:
