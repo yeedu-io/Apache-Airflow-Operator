@@ -64,7 +64,8 @@ class YeeduNotebookRunOperator:
     def create_notebook_instance(self):
         try:
             data = {
-                'notebook_id': self.notebook_id
+                "notebook_id": self.notebook_id,
+                "is_background": True
             }
             if self.arguments:
                 data['arguments'] = self.arguments
@@ -92,7 +93,7 @@ class YeeduNotebookRunOperator:
                 self.log.info(
                     "Check Yeedu notebook run status and logs here " + notebook_run_url
                 )
-                self.get_active_notebook_instances()
+                self.poll_notebook_run_status()
                 self.wait_for_kernel_status(skip_sleep=False)
                 self.get_websocket_token()
                 return
@@ -133,83 +134,35 @@ class YeeduNotebookRunOperator:
             )
             raise e
 
-    def get_active_notebook_instances(self):
-        TERMINAL_STATES = {"TERMINATED", "STOPPED", "ERROR"}
-        MAX_FAILURE_REATTEMPTS = 10
-        FAILURE_REATTEMPT_DELAY_SECONDS = 30
+    def poll_notebook_run_status(self):
+        TERMINAL_STATES = {"TERMINATED",
+                           "STOPPED", "ERROR", "STOPPING", "DONE"}
         NOTEBOOK_GET_STATUS_DELAY_SECONDS = 10
-        get_params = {
-            "notebook_ids": self.notebook_id,
-            "run_status": "RUNNING",
-            "isActive": "true"
-        }
-        url = f"{self.base_url}workspace/{self.workspace_id}/notebook/runs"
-        attempts_failure = 0
-        start_time = time.time()
         try:
             while True:
-                try:
-                    # Use the hook's _api_request but skip its retry logic
-                    # We're implementing our own retry logic in this function
-                    response = self.hook._api_request(
-                        "GET", url, params=get_params, skip_retry=True)
+                # Poll by notebook run status only
+                notebook_status = self.check_notebook_instance_status()
 
-                    status_code = response.status_code
-                    self.log.debug(
-                        f"Get Active Notebooks - Status Code: {status_code}")
+                if notebook_status == "RUNNING":
+                    self.log.info("Notebook instance is RUNNING. Proceeding.")
+                    return
 
-                    if status_code == 200:
-                        self.log.debug(
-                            f"Get Active Notebooks - Response: {response.json()}")
-                        return response.json()['data'][0]['run_id']
-
-                    if status_code == 404:
-                        self.log.info(
-                            f"Notebook is not yet running. Retrying after {NOTEBOOK_GET_STATUS_DELAY_SECONDS} seconds... "
-                        )
-                        time.sleep(NOTEBOOK_GET_STATUS_DELAY_SECONDS)
-                        notebook_status = self.check_notebook_instance_status()
-                        if notebook_status in TERMINAL_STATES:
-                            notebook_run_url = (
-                                f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}"
-                                f"/spark/run/{self.run_id}/run-logs?log_type=stderr"
-                            ).replace(f":{self.restapi_port}/api/v1", "")
-                            raise AirflowException(
-                                f"Notebook is in {notebook_status} state.\n"
-                                f"Please check notebook logs for detailed error: {notebook_run_url}"
-                            )
-                        attempts_failure = 0
-                        continue
-
-                    attempts_failure += 1
-                    self.log.error(
-                        f"Unexpected response status: {status_code} "
-                        f"(attempt {attempts_failure}/{MAX_FAILURE_REATTEMPTS})"
+                if notebook_status in TERMINAL_STATES:
+                    notebook_run_url = (
+                        f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}"
+                        f"/spark/run/{self.run_id}/run-logs?log_type=stderr"
+                    ).replace(f":{self.restapi_port}/api/v1", "")
+                    raise AirflowException(
+                        f"Notebook is in {notebook_status} state.\n"
+                        f"Please check notebook logs for detailed error: {notebook_run_url}"
                     )
-                    self.log.info(
-                        f"Sleeping for {FAILURE_REATTEMPT_DELAY_SECONDS} seconds before retrying...")
-                    if attempts_failure >= MAX_FAILURE_REATTEMPTS:
-                        raise Exception(
-                            f"Max retry attempts reached for status code {status_code}")
-                    time.sleep(FAILURE_REATTEMPT_DELAY_SECONDS)
 
-                except AirflowException as e:
-                    raise
-                except Exception as e:
-                    attempts_failure += 1
-                    self.log.error(
-                        f"Request failed due to exception (attempt {attempts_failure}/{MAX_FAILURE_REATTEMPTS}): {str(e)}"
-                    )
-                    self.log.info(
-                        f"Sleeping for {FAILURE_REATTEMPT_DELAY_SECONDS} seconds before retrying...")
-                    if attempts_failure >= MAX_FAILURE_REATTEMPTS:
-                        raise Exception(
-                            f"Continuous API failure reached the threshold after multiple attempts - {str(e)}")
-                    time.sleep(FAILURE_REATTEMPT_DELAY_SECONDS)
-
+                self.log.info(
+                    f"Notebook is in '{notebook_status}' state. Retrying after {NOTEBOOK_GET_STATUS_DELAY_SECONDS} seconds...")
+                time.sleep(NOTEBOOK_GET_STATUS_DELAY_SECONDS)
         except Exception as e:
             self.log.error(
-                f"An error occurred during get_active_notebook_instances: {str(e)}")
+                f"An error occurred during poll_notebook_run_status: {str(e)}")
             raise e
 
     def wait_for_kernel_status(self, skip_sleep=False):
@@ -286,7 +239,7 @@ class YeeduNotebookRunOperator:
             self.log.error(
                 f"An error occurred while getting WebSocket token: {e}")
 
-    def get_notebook_file_id(self):
+    def get_notebook_language(self):
         try:
             get_notebook_url = (
                 self.base_url + f"workspace/{self.workspace_id}/notebook"
@@ -297,10 +250,9 @@ class YeeduNotebookRunOperator:
                 params={"notebook_id": self.notebook_id},
             )
             if notebook_conf_response.status_code == 200:
-                notebook_file_id = notebook_conf_response.json().get("notebook_file_id")
                 notebook_language = notebook_conf_response.json().get(
                     "spark_job_type", {}).get("language")
-                return notebook_file_id, notebook_language
+                return notebook_language
             else:
                 error_msg = f"Failed to get notebook configuration. Status code: {notebook_conf_response.status_code} message: {notebook_conf_response.text}"
                 self.log.error(error_msg)
@@ -310,18 +262,14 @@ class YeeduNotebookRunOperator:
                 f"An error occurred while getting notebook configuration: {e}")
             raise e
 
-    def get_notebook_code_from_file(self, notebook_file_id):
+    def get_notebook_code_from_snapshot(self):
         try:
             get_notebook_url = (
-                self.base_url + f"workspace/file/download"
+                self.base_url + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/run/{self.run_id}/download"
             )
             notebook_download_response = self.hook._api_request(
                 "GET",
                 get_notebook_url,
-                params={
-                    "file_id": notebook_file_id,
-                    "workspace_id": self.workspace_id
-                },
             )
             if notebook_download_response.status_code == 200:
                 notebook_download_response_json = json.loads(
@@ -427,14 +375,19 @@ class YeeduNotebookRunOperator:
                 f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_id}/update"
             )
 
+            params = {
+                "run_id": self.run_id,
+                "save_as_snapshot": "true"
+            }
+
             update_cells_response = self.hook._api_request(
-                "POST", update_cell_url, self.notebook_json
+                "POST", update_cell_url, self.notebook_json, params
             )
 
             self.log.info(
                 f"Notebook clear-output update response: {update_cells_response.status_code}")
 
-            if update_cells_response.status_code == 201:
+            if update_cells_response.status_code == 200:
                 self.log.info("Notebook cells cleared successfully.")
             else:
                 raise Exception(
@@ -523,17 +476,23 @@ class YeeduNotebookRunOperator:
                 for output in cell.get("outputs", []):
                     output.pop("msg_id", None)
                     output.setdefault("output_type", "text")
+            
+            params = {
+                "run_id": self.run_id,
+                "save_as_snapshot": "true"
+            }
+
             update_cell_url = (
                 f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_id}/update"
             )
             update_cells_response = self.hook._api_request(
-                "POST", update_cell_url, self.notebook_json
+                "POST", update_cell_url, self.notebook_json, params
             )
 
             self.log.info(
                 f"Notebook update response status: {update_cells_response.status_code}")
 
-            if update_cells_response.status_code == 201:
+            if update_cells_response.status_code == 200:
                 self.log.info("Notebook cells updated successfully.")
                 return update_cells_response
             else:
@@ -1115,10 +1074,9 @@ class YeeduNotebookRunOperator:
             rel.dispatch()
             time.sleep(5)
 
-            notebook_file_id, notebook_language = self.get_notebook_file_id()
+            notebook_language = self.get_notebook_language()
 
-            notebook_download_response = self.get_notebook_code_from_file(
-                notebook_file_id)
+            notebook_download_response = self.get_notebook_code_from_snapshot()
 
             self.notebook_json = notebook_download_response
             self.notebook_cells = notebook_download_response.get("cells", [])
