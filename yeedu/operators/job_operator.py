@@ -1,21 +1,14 @@
 from typing import Optional, Union, Tuple, List
 from airflow.exceptions import AirflowException
-import logging
 from yeedu.hooks.yeedu import YeeduHook
-from airflow.utils.decorators import apply_defaults
-
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 
 class YeeduJobRunOperator:
-    template_fields: Tuple[str] = ("job_id",)
+    template_fields: Tuple[str] = ("run_id",)
 
-    @apply_defaults
     def __init__(
         self,
-        job_conf_id: str,
+        job_id: str,
         base_url: str,
         workspace_id: int,
         tenant_id: str,
@@ -24,11 +17,12 @@ class YeeduJobRunOperator:
         restapi_port: int,
         arguments: str = None,
         conf: List[str] = None,
+        logger=None,
         *args,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.job_conf_id: str = job_conf_id
+        self.job_id: str = job_id
         self.tenant_id: str = tenant_id
         self.base_url: str = base_url
         self.workspace_id: int = workspace_id
@@ -38,58 +32,70 @@ class YeeduJobRunOperator:
         self.arguments = arguments
         self.conf = conf
         self.hook: YeeduHook = YeeduHook(
-            conf_id=self.job_conf_id,
+            conf_id=self.job_id,
             tenant_id=self.tenant_id,
             base_url=self.base_url,
             workspace_id=self.workspace_id,
             connection_id=self.connection_id,
             token_variable_name=self.token_variable_name,
         )
-        self.job_id: Optional[Union[int, None]] = None
+        self.run_id: Optional[Union[int, None]] = None
+        self.log = logger
 
     def execute(self, context: dict) -> None:
         try:
             self.hook.yeedu_login(context)
-            logger.info("Job Config Id: %s", self.job_conf_id)
-            job_id = self.hook.submit_job(
-                self.job_conf_id,
+            self.log.info("Job Id: %s", self.job_id)
+            run_id = self.hook.submit_job(
+                self.job_id,
                 arguments=self.arguments,
                 conf=self.conf
             )
             restapi_port = self.restapi_port
 
-            logger.info("Job Submited (Job Id: %s)", job_id)
-            job_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/{job_id}/run-metrics?type=spark_job".replace(
+            self.log.info("Job Submited (Job Id: %s)", run_id)
+            job_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{run_id}/run-metrics?type=spark_job".replace(
                 f":{restapi_port}/api/v1", ""
             )
-            logger.info(
+            self.log.info(
                 "Check Yeedu Job run status and logs here " + job_run_url)
-            job_status: str = self.hook.wait_for_completion(job_id)
+            job_status: str = self.hook.wait_for_completion(run_id)
 
-            logger.info("Final Job Status: %s", job_status)
+            self.log.info("Final Job Status: %s", job_status)
 
-            job_log_stdout: str = self.hook.get_job_logs(job_id, "stdout")
-            job_log_stderr: str = self.hook.get_job_logs(job_id, "stderr")
+            job_log_stdout: str = self.hook.get_job_logs(run_id, "stdout")
+            job_log_stderr: str = self.hook.get_job_logs(run_id, "stderr")
             job_log: str = " stdout: " + job_log_stdout + " stderr: " + job_log_stderr
-            logger.info("Logs for Job ID %s (%s)", job_id, job_log)
+            self.log.info("Logs for run ID %s (%s)", run_id, job_log)
 
             if job_status in ["ERROR", "TERMINATED", "KILLED", "STOPPED"]:
-                logger.error(job_log)
+                self.log.error(job_log)
                 raise AirflowException(job_log)
 
         except Exception as e:
             raise AirflowException(e)
 
         finally:
-            logger.info("Stopping job in finally")
+            self.log.info("Stopping job in finally")
             job_status = self.hook.get_job_status(
-                job_id).json().get("job_status")
+                run_id).json().get("run_status")
+
             if job_status not in ["ERROR", "TERMINATED", "KILLED", "STOPPED", "DONE"]:
-                self.hook.kill_job(job_id)
+                self.hook.kill_job(run_id)
+
             # Only logout for LDAP or AAD
             try:
-                auth_type = self.hook.get_auth_type()
+                auth_type = self.hook.yeedu_auth_type
                 if auth_type in ["LDAP", "AAD"]:
-                    self.hook.yeedu_logout(context)
+                    self.hook.yeedu_logout()
             except Exception as e:
-                logger.warning(f"Logout skipped or failed: {e}")
+                self.log.warning(f"Logout skipped or failed: {e}")
+
+            # Close HTTP session if it exists
+            if hasattr(self, 'hook') and hasattr(self.hook, 'session'):
+                try:
+                    self.hook.session.close()
+                    self.log.info("HTTP session closed in finally block.")
+                except Exception as session_close_error:
+                    self.log.warning(
+                        f"Failed to close HTTP session: {session_close_error}")

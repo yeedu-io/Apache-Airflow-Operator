@@ -20,29 +20,22 @@
 
 from airflow.models import BaseOperator
 from airflow.exceptions import AirflowException
-from airflow.utils.decorators import apply_defaults
 from yeedu.operators.job_operator import YeeduJobRunOperator
 from yeedu.operators.notebook_operator import YeeduNotebookRunOperator
 from yeedu.operators.healthcheck_operator import YeeduHealthCheckOperator
-import logging
 from typing import List
 from urllib.parse import urlparse
 
-# Configure the logging system
-logging.basicConfig(level=logging.INFO)  # Set the logging level to INFO
-
-# Create a logger object
-logger = logging.getLogger(__name__)
-
 
 class YeeduOperator(BaseOperator):
-    @apply_defaults
+    template_fields = ("loop_input",)
     def __init__(
         self,
         job_url: str,
         connection_id: str,
         token_variable_name: str = None,
         arguments: str = None,
+        loop_input: str = None,
         conf: List[str] = None,
         *args,
         **kwargs
@@ -97,6 +90,7 @@ class YeeduOperator(BaseOperator):
         self.connection_id = connection_id
         self.token_variable_name = token_variable_name
         self.arguments = arguments
+        self.loop_input = loop_input
         (
             self.base_url,
             self.tenant_id,
@@ -106,7 +100,7 @@ class YeeduOperator(BaseOperator):
             self.restapi_port,
         ) = self.extract_ids(self.job_url)
         # Validate and process conf if provided
-        if conf is not None and self.job_type == "conf":
+        if conf is not None and (self.job_type == "conf" or self.job_type == "notebook"):
             if not isinstance(conf, List):
                 raise AirflowException("conf parameter must be a list")
             self.conf = self._validate_conf(conf)  # Store processed conf
@@ -130,27 +124,28 @@ class YeeduOperator(BaseOperator):
 
     def extract_ids(self, url):
         parsed_url = urlparse(url)
-        restapi_port = urlparse(url).port
-        path_segments = parsed_url.path.split("/")
-        tenant_id = path_segments[2] if len(path_segments) > 2 else None
-        workspace_id = path_segments[4] if len(path_segments) > 4 else None
+        restapi_port = parsed_url.port
+        path_segments = parsed_url.path.strip("/").split("/")
 
-        if "notebook" in path_segments:
+        tenant_id = path_segments[1] if len(path_segments) > 1 else None
+        workspace_id = path_segments[3] if len(path_segments) > 3 else None
+
+        if "job" in path_segments:
+            conf_id = (
+                path_segments[path_segments.index("job") + 1]
+                if len(path_segments) > path_segments.index("job") + 1
+                else None
+            )
+            job_type = "job"
+        elif "notebook" in path_segments:
             conf_id = (
                 path_segments[path_segments.index("notebook") + 1]
                 if len(path_segments) > path_segments.index("notebook") + 1
                 else None
             )
             job_type = "notebook"
-        elif "conf" in path_segments:
-            conf_id = (
-                path_segments[path_segments.index("conf") + 2]
-                if len(path_segments) > path_segments.index("conf") + 2
-                else None
-            )
-            job_type = "conf"
         elif "healthCheck" in path_segments:
-            job_type = "healthCheck"
+            job_type = "healthcheck"
             conf_id = -1
             workspace_id = -1
         else:
@@ -158,7 +153,6 @@ class YeeduOperator(BaseOperator):
                 "Please provide valid URL to schedule/run Jobs and Notebooks"
             )
 
-        # Construct base URL with :{restapi_port}/api/v1/ appended
         base_url = f"{parsed_url.scheme}://{parsed_url.hostname}:{restapi_port}/api/v1/"
 
         return (
@@ -180,9 +174,23 @@ class YeeduOperator(BaseOperator):
         :param context: The execution context.
         :type context: dict
         """
-        if self.job_type == "conf":
+        ti = context['ti']
+        run_id = ti.run_id
+        map_index = ti.map_index
+        task_id = ti.task_id
+
+        composite_key = f"{run_id}__{task_id}__{map_index}"
+
+        # Convert to str if needed
+        value = self.loop_input
+        if not isinstance(value, (str, int, float, dict, list)):
+            value = str(value)
+
+        ti.xcom_push(key=composite_key, value=value)
+
+        if self.job_type == "job":
             job_operator = YeeduJobRunOperator(
-                job_conf_id=self.conf_id,
+                job_id=self.conf_id,
                 base_url=self.base_url,
                 workspace_id=self.workspace_id,
                 tenant_id=self.tenant_id,
@@ -191,23 +199,28 @@ class YeeduOperator(BaseOperator):
                 restapi_port=self.restapi_port,
                 arguments=self.arguments,
                 conf=self.conf,
+                logger=self.log.getChild("job_operator")
             )
             return job_operator.execute(context)
         elif self.job_type == "notebook":
             notebook_operator = YeeduNotebookRunOperator(
                 base_url=self.base_url,
                 workspace_id=self.workspace_id,
-                notebook_conf_id=self.conf_id,
+                notebook_id=self.conf_id,
                 tenant_id=self.tenant_id,
                 connection_id=self.connection_id,
                 token_variable_name=self.token_variable_name,
                 restapi_port=self.restapi_port,
+                arguments=self.arguments,
+                conf=self.conf,
+                logger=self.log.getChild("notebook_operator")
             )
             return notebook_operator.execute(context)
         elif self.job_type == "healthcheck":
             health_check_operator = YeeduHealthCheckOperator(
                 base_url=self.base_url,
                 connection_id=self.connection_id,
+                logger=self.log.getChild("health_check_operator")
             )
             return health_check_operator.execute(context)
         else:
@@ -234,7 +247,7 @@ class YeeduOperator(BaseOperator):
                     f"Invalid conf item '{item}'. Both key and value must be non-empty")
 
             if key in processed_conf:
-                logger.warning(
+                self.log.warning(
                     f"Duplicate configuration key found: '{key}'. "
                     f"Value '{processed_conf[key]}' will be overwritten with '{value}'"
                 )

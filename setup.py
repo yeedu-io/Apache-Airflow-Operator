@@ -10,7 +10,7 @@ def read(*parts):
 
 setup(
     name='airflow-yeedu-operator',
-    version='2.9.0-rc9',
+    version='2.9.1',
     description='Submission and monitoring of jobs and notebooks using the Yeedu API in Apache Airflow.',
     long_description=read('README.md'),
     long_description_content_type='text/markdown',
@@ -22,6 +22,7 @@ setup(
         'requests>=2.27',
         'websocket-client>=1.8.0',
         'rel>=0.4.9.19',
+        'cron_descriptor',
     ],
     project_urls={
         'GitHub': 'https://github.com/yeedu-io/Apache-Airflow-Operator',
