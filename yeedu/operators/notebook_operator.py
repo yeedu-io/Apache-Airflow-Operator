@@ -8,6 +8,7 @@ import websocket
 import ssl
 import rel
 import signal
+import re
 from datetime import datetime, timezone
 from airflow.exceptions import AirflowException
 from yeedu.hooks.yeedu import YeeduHook
@@ -28,6 +29,7 @@ class YeeduNotebookRunOperator:
         restapi_port: int,
         arguments: str = None,
         conf: list = None,
+        cluster_ids: list = None,
         logger=None,
         *args,
         **kwargs,
@@ -42,12 +44,28 @@ class YeeduNotebookRunOperator:
         self.restapi_port = restapi_port
         self.arguments = arguments
         self.conf = conf
+        self.cluster_ids = cluster_ids or []
         self.notebook_cells = {}
         self.notebook_executed = True
         self.run_id = None
         self.cell_output_data = []
         self.execution_times = {}
         self.notebook_json = {}
+        # Cluster bump tracking
+        # Start at -1 to indicate using notebook's default cluster
+        self.current_cluster_index = -1
+        self.should_bump_cluster = False
+        self.cluster_bumped_successfully = False
+        # Bump pattern from job operator
+        self._BUMP_PATTERN = re.compile(
+            r'exit code:?\s*(?:137|143|139|134|52)|'
+            r'oomkilled|outofmemoryerror|java heap space|'
+            r'gc overhead limit exceeded|killed process|'
+            r'sigkill|sigterm|sigsegv|segmentation fault|sigabrt|'
+            r'sparkexitcode|exceed_max_executor_failures|'
+            r'driver_timeout|container killed by yarn for exceeding memory limits',
+            re.IGNORECASE
+        )
         self.error_name = None
         self.ws = None
         self.executionCount = 0
@@ -60,6 +78,97 @@ class YeeduNotebookRunOperator:
             token_variable_name=self.token_variable_name,
         )
         self.log = logger
+
+    def _should_bump_cluster_from_logs(self, run_id: int) -> bool:
+        """
+        Inspect logs and workflow errors to decide if this failure qualifies for cluster bump.
+
+        Args:
+            run_id (int): The run ID to check logs for
+
+        Returns:
+            bool: True if error patterns indicate cluster bump would help, False otherwise
+        """
+        try:
+            wf_errors = "\n".join(
+                self.hook.get_notebook_workflow_errors(run_id) or [])
+
+            if self._BUMP_PATTERN.search(wf_errors):
+                return True
+
+            stderr = self.hook.get_notebook_logs(
+                run_id, "stderr", last_n_lines=1000) or ""
+
+            if self._BUMP_PATTERN.search(stderr):
+                return True
+
+            stdout = self.hook.get_notebook_logs(
+                run_id, "stdout", last_n_lines=1000) or ""
+
+            if self._BUMP_PATTERN.search(stdout):
+                return True
+
+            return False
+
+        except Exception as e:
+            self.log.warning(
+                f"Error checking logs for cluster bump eligibility: {e}")
+            return False
+
+    def _can_bump_cluster(self) -> bool:
+        """
+        Check if cluster bump is possible (more clusters available).
+
+        Returns:
+            bool: True if more clusters are available for bumping, False otherwise
+        """
+        return (self.cluster_ids and self.current_cluster_index < len(self.cluster_ids) - 1)
+
+    def _should_bump_cluster_from_error(self, error_name: str, error_value: str, traceback: list) -> bool:
+        """
+        Check if the current error qualifies for cluster bump based on error patterns.
+        """
+        if not error_name or not error_value:
+            return False
+
+        # Combine error information for pattern matching
+        error_text = f"{error_name}: {error_value}"
+        if traceback:
+            error_text += " " + " ".join(traceback)
+
+        return bool(self._BUMP_PATTERN.search(error_text))
+
+    def _update_cluster_and_restart(self):
+        """
+        Update to the next cluster and restart notebook execution.
+        Does NOT create new notebook - that's handled by main execution loop.
+        """
+        if not self.cluster_ids or self.current_cluster_index >= len(self.cluster_ids) - 1:
+            return False
+
+        try:
+            self.current_cluster_index += 1
+            new_cluster_id = self.cluster_ids[self.current_cluster_index]
+
+            # Stop current notebook instance
+            self.stop_notebook()
+
+            self.log.info(
+                f"Bumping to cluster {new_cluster_id} (index {self.current_cluster_index})")
+
+            # Update notebook cluster configuration
+            self.hook.update_notebook_cluster(self.notebook_id, new_cluster_id)
+
+            # Reset state for new run - DON'T create notebook here, main loop will handle it
+            self.should_bump_cluster = False
+            self.cluster_bumped_successfully = True
+            # Don't set notebook_executed = True here, let restart logic handle it
+
+            return True
+
+        except Exception as e:
+            self.log.error(f"Failed to bump cluster: {e}")
+            return False
 
     def create_notebook_instance(self):
         try:
@@ -358,6 +467,11 @@ class YeeduNotebookRunOperator:
                         f"Notebook instance id: {self.run_id} stopped successfully."
                     )
                 return notebook_stop_response
+            elif notebook_stop_response.status_code == 409:
+                # Notebook already stopped - this is OK for cluster bump scenarios
+                self.log.info(
+                    f"Notebook instance id: {self.run_id} is already stopped.")
+                return notebook_stop_response
             else:
                 self.log.error(
                     f"Failed to stop notebook. Status code: {notebook_stop_response.status_code}, Message: {notebook_stop_response.text}"
@@ -579,8 +693,17 @@ class YeeduNotebookRunOperator:
         try:
             response = json.loads(message)
             msg_type = response.get("msg_type", "")
-            msg_id = response["parent_header"]["msg_id"]
+
+            # Safely get msg_id from parent_header
+            parent_header = response.get("parent_header", {})
+            msg_id = parent_header.get("msg_id", "")
+
             self.log.debug(f"Response content: {response}")
+            # Skip messages without msg_id (they're usually status/heartbeat messages)
+            if not msg_id:
+                self.log.debug(f"Skipping message without msg_id: {msg_type}")
+                return
+
             self.log.info(
                 f"Received message of type: {msg_type} with message id: ({msg_id})")
 
@@ -619,6 +742,20 @@ class YeeduNotebookRunOperator:
                 self.error_value = content.get("evalue", "")
                 traceback = content.get("traceback", [])
 
+                # Check if this error qualifies for cluster bump
+                if self._should_bump_cluster_from_error(self.error_name, self.error_value, traceback):
+                    if self._can_bump_cluster():
+                        self.log.info(
+                            f"Error qualifies for cluster bump: {self.error_name} - {self.error_value}")
+                        self.should_bump_cluster = True
+                        return  # Exit immediately to trigger cluster bump
+                    else:
+                        # Final cluster failure - no more clusters available
+                        self.log.error(
+                            f"Bump-eligible error occurred on final cluster: {self.error_name} - {self.error_value}")
+                        self.notebook_executed = False
+                        return  # Exit immediately to break the infinite wait
+
                 if traceback:
                     formatted_error_output = self.format_error_output(
                         traceback)
@@ -654,9 +791,26 @@ class YeeduNotebookRunOperator:
             elif msg_type == "stream":
                 content = response.get("content", {})
                 text_value = content.get("text", "")
-                msg_id = response["parent_header"]["msg_id"]
                 self.log.debug(
                     f"Stream for message id ({msg_id})")
+
+                # Check if stream contains bump-eligible patterns for early detection
+                if self._BUMP_PATTERN.search(text_value):
+                    if self._can_bump_cluster():
+                        self.log.info(
+                            f"OOM/Resource error detected in stream: {text_value[:200]}...")
+                        self.should_bump_cluster = True
+                    else:
+                        self.log.error(
+                            f"Resource error detected on final cluster: {text_value[:200]}...")
+                        # Preserve an informative error for final failure handling
+                        if not self.error_name:
+                            self.error_name = "ResourceLimitError"
+                        if not self.error_value:
+                            self.error_value = text_value.strip()[:500]
+                        self.should_bump_cluster = False
+                        self.notebook_executed = False
+
                 self.cell_output_data.append({
                     "msg_id": msg_id,
                     "output_type": "text",
@@ -688,6 +842,18 @@ class YeeduNotebookRunOperator:
             elif msg_type == "status":
                 execution_state = response.get(
                     "content", {}).get("execution_state", "")
+
+                # Handle kernel restart scenario
+                if execution_state == "restarting":
+                    self.log.error(
+                        "Kernel restarting - marking execution as failed")
+                    self.notebook_executed = False
+                    if not self.error_name:
+                        self.error_name = "KernelRestart"
+                    if not self.error_value:
+                        self.error_value = "Kernel restarted unexpectedly"
+                    return
+
                 if execution_state == "idle" and msg_id:
                     end_time = datetime.now(timezone.utc).isoformat(
                         timespec='milliseconds').replace('+00:00', 'Z')
@@ -730,9 +896,17 @@ class YeeduNotebookRunOperator:
                 elif self.content_status == "error":
                     self.error_value = content.get("evalue", "")
                     traceback = content.get("traceback", [])
-                    self.log.debug(
-                        "Setting notebook executed flag to False due to error status.")
-                    self.notebook_executed = False
+
+                    # Check if this error qualifies for cluster bump
+                    if (self._can_bump_cluster() and self._should_bump_cluster_from_error(self.error_name, self.error_value, traceback)):
+                        self.log.info(
+                            f"Error qualifies for cluster bump: {self.error_name} - {self.error_value}")
+                        self.should_bump_cluster = True
+                    else:
+                        # No cluster bump available, set notebook as failed
+                        self.log.debug(
+                            "Setting notebook executed flag to False due to error status.")
+                        self.notebook_executed = False
 
                     if traceback:
                         formatted_error_output = self.format_error_output(
@@ -764,9 +938,11 @@ class YeeduNotebookRunOperator:
 
                     self.update_notebook_cells()
 
-                    self.exit_notebook(
-                        f"Exiting due to 'error' status in 'execute_reply' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
-                    )
+                    # Only exit if cluster bump is not possible
+                    if not self.should_bump_cluster:
+                        self.exit_notebook(
+                            f"Exiting due to 'error' status in 'execute_reply' message type. The cell with message ID ({msg_id}) failed with error: {self.error_name} - {self.error_value}."
+                        )
 
                 elif self.content_status == "aborted":
                     self.log.warning(
@@ -1110,108 +1286,208 @@ class YeeduNotebookRunOperator:
             self.conf.append(f"spark.yeedu.map_index={ti.map_index}")
 
             self.hook.yeedu_login(context)
-            self.create_notebook_instance()
-            self.ws = self.connect_websocket()
-            rel.dispatch()
-            time.sleep(5)
 
-            notebook_file_id, notebook_language = self.get_notebook_file_id()
-
-            notebook_download_response = self.get_notebook_code_from_file(
-                notebook_file_id)
-
-            self.notebook_json = notebook_download_response
-            self.notebook_cells = notebook_download_response.get("cells", [])
-
-            self.clear_notebook_cell_outputs()
-
-            session_id = str(uuid.uuid4())
-
-            self.log.debug(
-                f"Starting execution of {len(self.notebook_cells)} cells")
-
-            for i, cell in enumerate(self.notebook_cells):
-
-                code = cell.get("source", "")
-                msg_id = cell.setdefault("cell_uuid", str(uuid.uuid4()))
-
-                self.log.debug(
-                    f"Sending execution request for cell {i+1}/{len(self.notebook_cells)} (message id: {msg_id})")
-
-                if notebook_language.upper() == "SQL":
-                    code = f"%%sql\n{code}"
-
-                self.send_execute_request(self.ws, code, session_id, msg_id)
-                cell["msg_id"] = msg_id
-
-            while len(self.notebook_cells) > 0:
-
-                if not self.notebook_executed:
-                    self.log.error(
-                        "Cell execution failed, stopping execution")
-                    break
-
-                time.sleep(10)
-
+            # Initialize cluster usage if cluster_ids provided
+            if self.cluster_ids:
                 self.log.info(
-                    f"Waiting for {len(self.notebook_cells)} cell(s) to finish execution.")
+                    f"Cluster bump enabled, planned clusters in order: {self.cluster_ids}")
+                self.log.info(
+                    "Starting execution on the notebook's existing cluster configuration")
 
-                self.wait_for_kernel_status(skip_sleep=True)
-                for cell in self.notebook_cells:
+            # Main execution loop for cluster bumping
+            while True:
+                try:
+                    # Only set cluster if we're bumping (current_cluster_index >= 0)
+                    if self.cluster_ids and self.current_cluster_index >= 0:
+                        current_cluster_id = self.cluster_ids[self.current_cluster_index]
+                        self.log.info(
+                            f"Cluster bump attempt {self.current_cluster_index + 1}/{len(self.cluster_ids)}: executing notebook on cluster {current_cluster_id}")
+                        self.hook.update_notebook_cluster(
+                            self.notebook_id, current_cluster_id)
+                    elif self.cluster_ids:
+                        self.log.info(
+                            "Executing notebook on its existing cluster configuration")
+                    else:
+                        self.log.info(
+                            "Executing notebook (no cluster bump configured)")
+
+                    self.create_notebook_instance()
+                    self.ws = self.connect_websocket()
+                    rel.dispatch()
+                    time.sleep(5)
+
+                    notebook_file_id, notebook_language = self.get_notebook_file_id()
+
+                    notebook_download_response = self.get_notebook_code_from_file(
+                        notebook_file_id)
+
+                    self.notebook_json = notebook_download_response
+                    self.notebook_cells = notebook_download_response.get(
+                        "cells", [])
+
+                    self.clear_notebook_cell_outputs()
+
+                    session_id = str(uuid.uuid4())
+
                     self.log.debug(
-                        f'Waiting for this cell id ({cell.get("cell_uuid")}) to finish execution.')
+                        f"Starting execution of {len(self.notebook_cells)} cells")
 
-                notebook_status = self.check_notebook_instance_status()
+                    # Execute all cells
+                    for i in range(0, len(self.notebook_cells)):
+                        cell = self.notebook_cells[i]
+                        code = cell.get("source", "")
+                        msg_id = cell.setdefault(
+                            "cell_uuid", str(uuid.uuid4()))
 
-                ws_connected = self.ws and self.ws.sock and self.ws.sock.connected
+                        self.log.debug(
+                            f"Sending execution request for cell {i+1}/{len(self.notebook_cells)} (message id: {msg_id})")
 
-                if len(self.notebook_cells) != 0 and (notebook_status == "STOPPED" or not ws_connected):
+                        if notebook_language.upper() == "SQL":
+                            code = f"%%sql\n{code}"
+
+                        self.send_execute_request(
+                            self.ws, code, session_id, msg_id)
+                        cell["msg_id"] = msg_id
+
+                    while len(self.notebook_cells) > 0:
+                        # Check if cluster bump was triggered
+                        if self.should_bump_cluster:
+                            self.log.info(
+                                "Cluster bump triggered, preparing the next cluster")
+                            if self._update_cluster_and_restart():
+                                self.log.info(
+                                    "Cluster bump applied, restarting execution on the new cluster")
+                                break  # Break out of cell execution loop to restart with new cluster
+                            else:
+                                # No more clusters available - final failure
+                                self.log.error(
+                                    "Cluster bump failed because no further clusters are available")
+                                self.notebook_executed = False
+                                # break
+                                # Force exit from the main loop
+                                raise AirflowException(
+                                    f"Notebook execution failed on an existing cluster and all {len(self.cluster_ids) if self.cluster_ids else 0} bump clusters. Final error: {self.error_name} - {self.error_value}")
+
+                        if not self.notebook_executed:
+                            self.log.error(
+                                "Cell execution failed, stopping execution")
+                            break
+
+                        time.sleep(10)
+
+                        self.log.info(
+                            f"Waiting for {len(self.notebook_cells)} cell(s) to finish execution.")
+
+                        self.wait_for_kernel_status(skip_sleep=True)
+                        for cell in self.notebook_cells:
+                            self.log.debug(
+                                f'Waiting for this cell id ({cell.get("cell_uuid")}) to finish execution.')
+
+                        notebook_status = self.check_notebook_instance_status()
+
+                        ws_connected = self.ws and self.ws.sock and self.ws.sock.connected
+
+                        if len(self.notebook_cells) != 0 and (notebook_status == "STOPPED" or not ws_connected):
+                            self.log.debug(
+                                "Setting notebook executed flag to False due to connection loss.")
+                            self.notebook_executed = False
+                            raise AirflowException(
+                                "Connection is lost without executing all the cells. please check logs for more details"
+                            )
+
+                        if notebook_status in ["STOPPED", "TERMINATED", "ERROR"]:
+                            self.log.debug(
+                                "Setting notebook executed flag to False.")
+                            self.notebook_executed = False
+                            break
+
                     self.log.debug(
-                        "Setting notebook executed flag to False due to connection loss.")
-                    self.notebook_executed = False
-                    raise AirflowException(
-                        "Connection is lost without executing all the cells. please check logs for more details"
-                    )
+                        f"notebook executed: {self.notebook_executed}")
 
-                if notebook_status in ["STOPPED", "TERMINATED", "ERROR"]:
-                    self.log.debug(
-                        "Setting notebook executed flag to False.")
-                    self.notebook_executed = False
-                    break
+                    # Check for cluster bump restart FIRST (higher priority than success)
+                    if self.cluster_bumped_successfully:
+                        bumped_cluster_id = None
+                        if self.cluster_ids and self.current_cluster_index >= 0:
+                            bumped_cluster_id = self.cluster_ids[self.current_cluster_index]
+                        self.log.info(
+                            f"Cluster bump applied, restarting execution on cluster {bumped_cluster_id}"
+                            if bumped_cluster_id is not None
+                            else "Cluster bump applied, restarting execution")
+                        self.cluster_bumped_successfully = False
+                        # Reset cell execution state for fresh start
+                        self.notebook_cells = {}
+                        self.cell_output_data = []
+                        self.execution_times = {}
+                        self.notebook_json = {}
+                        # Reset execution state for fresh start
+                        self.notebook_executed = True
+                        continue
 
-            self.log.debug(f"notebook executed: {self.notebook_executed}")
+                    # If execution was successful, stop the cluster bumping loop
+                    if self.notebook_executed:
+                        time.sleep(5)
+                        self.stop_notebook()
+                        return 0
 
-            if self.notebook_executed:
-                time.sleep(5)
-                self.stop_notebook()
-                return 0
-            elif self.check_notebook_instance_status() not in ["STOPPED", "TERMINATED", "ERROR"]:
-                self.log.debug(
-                    "Exiting notebook due to cell execution failure.")
-                self.exit_notebook(
-                    f"Cell execution failed with error: {self.error_name} - {self.error_value}"
-                )
+                    # If execution failed and no cluster bump available, proceed with error handling
+                    if self.check_notebook_instance_status() not in ["STOPPED", "TERMINATED", "ERROR"]:
+                        self.log.debug(
+                            "Exiting notebook due to cell execution failure.")
+                        self.exit_notebook(
+                            f"Cell execution failed with error: {self.error_name} - {self.error_value}"
+                        )
 
-            self.close_websocket_connection()
+                    self.close_websocket_connection()
 
-            if self.content_status == "error" or self.notebook_executed is False:
-                # Kept to catch the error raised from dbutils.notebook.exit()
-                if self.error_name is not None and self.error_name == "CleanExit":
-                    self.log.info(
-                        f"Notebook execution completed with exit message: '{self.error_value}'")
-                else:
-                    raise AirflowException(
-                        f"{self.error_name} - {self.error_value}")
+                    if self.content_status == "error" or self.notebook_executed is False:
+                        # Kept to catch the error raised from dbutils.notebook.exit()
+                        if self.error_name is not None and self.error_name == "CleanExit":
+                            self.log.info(
+                                f"Notebook execution completed with exit message: '{self.error_value}'")
+                        else:
+                            raise AirflowException(
+                                f"{self.error_name} - {self.error_value}")
 
-            notebook_status = self.check_notebook_instance_status()
+                    notebook_status = self.check_notebook_instance_status()
 
-            if notebook_status in ["TERMINATED", "ERROR"]:
-                notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/spark/run/{self.run_id}/run-logs?log_type=stderr".replace(
-                    f":{self.restapi_port}/api/v1", ""
-                )
+                    if notebook_status in ["TERMINATED", "ERROR"]:
+                        notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{self.run_id}/run-logs?log_type=stderr".replace(
+                            f":{self.restapi_port}/api/v1", ""
+                        )
+                        raise AirflowException(
+                            f"Notebook is in {notebook_status} state. \n Please check notebook logs for detailed error:{notebook_run_url}"
+                        )
+
+                    # If no cluster_ids provided, break after first execution
+                    if not self.cluster_ids:
+                        break
+
+                except Exception as e:
+                    # Check if we should try cluster bump for this error
+                    if (
+                        self.cluster_ids
+                        and self.current_cluster_index < len(self.cluster_ids) - 1
+                        and (
+                            self._should_bump_cluster_from_logs(
+                                self.run_id) if self.run_id else False
+                        )
+                    ):
+                        self.log.info(
+                            f"Exception qualifies for cluster bump: {e}")
+                        if self._update_cluster_and_restart():
+                            self.log.info(
+                                "Cluster bump applied after exception, retrying execution")
+                            continue
+
+                    # Re-raise if no cluster bump available or bump failed
+                    raise e
+
+            # If we exhausted all clusters without success
+            if self.cluster_ids and self.current_cluster_index >= len(self.cluster_ids) - 1:
+                self.log.error(
+                    "Cluster bump exhausted all configured clusters without success")
                 raise AirflowException(
-                    f"Notebook is in {notebook_status} state. \n Please check notebook logs for detailed error:{notebook_run_url}"
-                )
+                    f"Notebook execution failed on existings cluster and all {len(self.cluster_ids)} bump clusters")
 
         except Exception as e:
             self.log.error(f"Notebook execution failed with error:  {e}")
