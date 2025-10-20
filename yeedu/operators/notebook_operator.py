@@ -51,6 +51,9 @@ class YeeduNotebookRunOperator:
         self.error_name = None
         self.ws = None
         self.executionCount = 0
+        # WebSocket connection tracking for native reconnection
+        self.ws_connection_permanently_lost = False
+        self.ws_last_disconnect_time = None
         self.hook: YeeduHook = YeeduHook(
             conf_id=self.notebook_id,
             tenant_id=self.tenant_id,
@@ -536,10 +539,25 @@ class YeeduNotebookRunOperator:
 
     def on_message(self, ws, message):
         try:
+            # If we receive a message, connection is working - reset disconnection tracking
+            if self.ws_last_disconnect_time:
+                self.log.info(
+                    "WebSocket reconnection successful - received message from server")
+                self.ws_connection_permanently_lost = False
+                self.ws_last_disconnect_time = None
+
             response = json.loads(message)
             msg_type = response.get("msg_type", "")
-            msg_id = response["parent_header"]["msg_id"]
+
+            # Safely get msg_id from parent_header
+            parent_header = response.get("parent_header", {})
+            msg_id = parent_header.get("msg_id", "")
+
             self.log.debug(f"Response content: {response}")
+            # Skip messages without msg_id (they're usually status/heartbeat messages)
+            if not msg_id:
+                self.log.debug(f"Skipping message without msg_id: {msg_type}")
+                return
             self.log.info(
                 f"Received message of type: {msg_type} with message id: ({msg_id})")
 
@@ -613,7 +631,7 @@ class YeeduNotebookRunOperator:
             elif msg_type == "stream":
                 content = response.get("content", {})
                 text_value = content.get("text", "")
-                msg_id = response["parent_header"]["msg_id"]
+                # msg_id = response["parent_header"]["msg_id"]
                 self.log.debug(
                     f"Stream for message id ({msg_id})")
                 self.cell_output_data.append({
@@ -749,11 +767,23 @@ class YeeduNotebookRunOperator:
 
     def on_error(self, ws, error):
         self.log.error(f"WebSocket encountered an error: {error}")
+        # Track disconnection time for timeout detection
+        if not self.ws_connection_permanently_lost:
+            self.ws_last_disconnect_time = time.time()
+            self.log.info(
+                f"WebSocket error detected at '{self.ws_last_disconnect_time}', native reconnection will handle recovery")
 
     def on_close(self, ws, close_status_code, close_msg):
         try:
             self.log.info(
                 f"WebSocket closed with status code: {close_status_code} and message: {close_msg}")
+
+            # Track disconnection time if it's an unexpected closure (not normal close)
+            if close_status_code not in [1000, 1001] and not self.ws_last_disconnect_time:
+                self.ws_last_disconnect_time = time.time()
+                self.log.info(
+                    f"WebSocket unexpected disconnection detected at : '{self.ws_last_disconnect_time}'")
+
             # Only attempt to close if socket exists
             if hasattr(ws, 'sock') and ws.sock:
                 try:
@@ -777,6 +807,40 @@ class YeeduNotebookRunOperator:
 
     def on_open(self, ws):
         self.log.info("WebSocket opened")
+        # Reset connection tracking on successful connection
+        self.ws_connection_permanently_lost = False
+        self.ws_last_disconnect_time = None
+
+    def on_reconnect(self, ws):
+        """Called when WebSocket starts a reconnection attempt (native library callback)"""
+        self.log.info("WebSocket reconnection initiated by native library")
+
+        if not self.ws_last_disconnect_time:
+            self.ws_last_disconnect_time = time.time()
+
+        self.log.info(
+            "Native WebSocket library handling reconnection with 5-second delays")
+
+    def is_websocket_reconnection_timed_out(self, max_disconnect_time=60):
+        """
+        Check if WebSocket has been disconnected for too long.
+        Since native reconnection handles retry logic, we only check for prolonged disconnection.
+
+        Args:
+            max_disconnect_time: Maximum time (in seconds) to allow disconnection before giving up
+        """
+        if not self.ws_last_disconnect_time:
+            return False
+
+        elapsed_time = time.time() - self.ws_last_disconnect_time
+
+        if elapsed_time > max_disconnect_time:
+            self.log.error(
+                f"WebSocket disconnected for {elapsed_time:.1f}s (longer than {max_disconnect_time}s limit)")
+            self.ws_connection_permanently_lost = True
+            return True
+
+        return False
 
     def close_websocket_connection(self):
         if self.ws:
@@ -956,6 +1020,7 @@ class YeeduNotebookRunOperator:
             on_message=self.on_message,
             on_error=self.on_error,
             on_close=self.on_close,
+            on_reconnect=self.on_reconnect,
         )
 
         def run_forever_in_thread():
@@ -970,6 +1035,7 @@ class YeeduNotebookRunOperator:
 
             self.ws.run_forever(
                 sslopt=sslopt,
+                # Native reconnection with 5-second delay between attempts (not max attempts)
                 reconnect=5
             )
 
@@ -1123,13 +1189,26 @@ class YeeduNotebookRunOperator:
 
                 ws_connected = self.ws and self.ws.sock and self.ws.sock.connected
 
-                if len(self.notebook_cells) != 0 and (notebook_status == "STOPPED" or not ws_connected):
+                # Check if disconnection has lasted too long (native reconnection handles retry logic)
+                if not ws_connected:
+                    self.is_websocket_reconnection_timed_out()
+
+                # Check if connection is permanently lost or notebook instance stopped
+                if len(self.notebook_cells) != 0 and (notebook_status == "STOPPED" or
+                                                      (not ws_connected and self.ws_connection_permanently_lost)):
                     self.log.debug(
-                        "Setting notebook executed flag to False due to connection loss.")
+                        "Setting notebook executed flag to False due to permanent connection loss.")
                     self.notebook_executed = False
                     raise AirflowException(
-                        "Connection is lost without executing all the cells. please check logs for more details"
+                        f"WebSocket connection is permanently lost due to prolonged disconnection. "
+                        "Unable to execute remaining cells. Please check logs for more details"
                     )
+
+                # Log connection status
+                if not ws_connected and not self.ws_connection_permanently_lost:
+                    elapsed = time.time() - self.ws_last_disconnect_time if self.ws_last_disconnect_time else 0
+                    self.log.info(
+                        f"WebSocket disconnected for {elapsed:.1f}s. Native reconnection handling recovery with 5s delays...")
 
                 if notebook_status in ["STOPPED", "TERMINATED", "ERROR"]:
                     self.log.debug(
