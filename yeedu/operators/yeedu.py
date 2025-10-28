@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 class YeeduOperator(BaseOperator):
     template_fields = ("loop_input",)
+
     def __init__(
         self,
         job_url: str,
@@ -37,11 +38,12 @@ class YeeduOperator(BaseOperator):
         arguments: str = None,
         loop_input: str = None,
         conf: List[str] = None,
+        cluster_ids: List[int] = None,
         *args,
         **kwargs
     ):
         """
-        Initializes the class with the given parameters.
+        Initializes the operator with Yeedu connection details.
 
         Parameters:
         job_url (str): The URL of the Yeedu Notebook or job.
@@ -52,12 +54,8 @@ class YeeduOperator(BaseOperator):
             - extra (dict): Additional parameters in JSON format, including:
                 - YEEDU_AIRFLOW_VERIFY_SSL (str): true or false to verify SSL.
                 - YEEDU_SSL_CERT_FILE (str): Path to the SSL certificate file.
-        arguments (str, optional): Arguments to pass to the job run. 
-            Note: This parameter is only used for the job_type "job" and will be silently ignored 
-            for notebooks.
-        conf (List[str], optional): Configuration list for the job run. 
-            Note: This parameter is only used for the job_type "job" and will be silently ignored 
-            for notebooks.
+        arguments (str, optional): Arguments to pass to the job or notebook run.
+        conf (List[str], optional): Configuration list for the job or notebook run.
             Must be provided as a list using square brackets [].
             Each configuration item must be in 'key=value' format.
             If duplicate keys are provided, only the last occurrence will be used.
@@ -82,8 +80,11 @@ class YeeduOperator(BaseOperator):
                     "spark.driver.memory=4g",
                     "spark.driver.memory=8g"
                 ]
-        *args: Additional positional arguments.
-        **kwargs: Additional keyword arguments.
+        token_variable_name (str, optional): Airflow Variable name that keeps the Yeedu Session token, if AZURE_SSO is configured.
+        loop_input (str, optional): Value to push to XCom for downstream tasks.
+        cluster_ids (List[int], optional): Cluster IDs to try after the run fails on existing cluster configured. The job always runs once on its current cluster before bumping. Pass cluster IDs in bump order, duplicates are removed automatically.
+        *args: Additional positional arguments for BaseOperator.
+        **kwargs: Additional keyword arguments for BaseOperator.
         """
         super().__init__(*args, **kwargs)
         self.job_url = job_url
@@ -91,6 +92,7 @@ class YeeduOperator(BaseOperator):
         self.token_variable_name = token_variable_name
         self.arguments = arguments
         self.loop_input = loop_input
+        self.cluster_ids = self._prepare_cluster_ids(cluster_ids)
         (
             self.base_url,
             self.tenant_id,
@@ -106,6 +108,32 @@ class YeeduOperator(BaseOperator):
             self.conf = self._validate_conf(conf)  # Store processed conf
         else:
             self.conf = None
+
+    def _prepare_cluster_ids(self, cluster_ids: List[int]) -> List[int]:
+        """Return cluster IDs with duplicates removed while preserving the original order."""
+        if cluster_ids is None:
+            return []
+
+        if not isinstance(cluster_ids, list):
+            raise AirflowException(
+                "cluster_ids parameter must be provided as a list.")
+
+        seen = set()
+        ordered_unique_ids = []
+
+        for index, cluster_id in enumerate(cluster_ids):
+            try:
+                cluster_value = int(cluster_id)
+            except (TypeError, ValueError):
+                raise AirflowException(
+                    f"cluster_ids item at position {index} must be an integer. Received: {cluster_id!r}"
+                )
+
+            if cluster_value not in seen:
+                ordered_unique_ids.append(cluster_value)
+                seen.add(cluster_value)
+
+        return ordered_unique_ids
 
     def check_url(self, job_url):
         """
@@ -199,6 +227,7 @@ class YeeduOperator(BaseOperator):
                 restapi_port=self.restapi_port,
                 arguments=self.arguments,
                 conf=self.conf,
+                cluster_ids=self.cluster_ids,
                 logger=self.log.getChild("job_operator")
             )
             return job_operator.execute(context)
@@ -213,6 +242,7 @@ class YeeduOperator(BaseOperator):
                 restapi_port=self.restapi_port,
                 arguments=self.arguments,
                 conf=self.conf,
+                cluster_ids=self.cluster_ids,
                 logger=self.log.getChild("notebook_operator")
             )
             return notebook_operator.execute(context)
