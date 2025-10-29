@@ -377,7 +377,8 @@ class YeeduNotebookRunOperator:
     def get_notebook_code_from_snapshot(self):
         try:
             get_notebook_url = (
-                self.base_url + f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/run/{self.run_id}/download"
+                self.base_url +
+                f"workspace/{self.workspace_id}/notebook/{self.notebook_id}/run/{self.run_id}/download"
             )
             notebook_download_response = self.hook._api_request(
                 "GET",
@@ -470,52 +471,6 @@ class YeeduNotebookRunOperator:
             self.log.error(f"Failed to calculate duration: {e}")
             return ""
 
-    def clear_notebook_cell_outputs(self):
-        try:
-            for cell in self.notebook_json.get("cells", []):
-                # Clear outputs
-                cell["outputs"] = []
-
-                # Clear execution metadata
-                cell_metadata = cell.setdefault("metadata", {})
-                cell_metadata.pop("startTime", None)
-                cell_metadata.pop("endTime", None)
-                cell_metadata.pop("lastRunTime", None)
-                cell_metadata.pop("runBy", None)
-                cell["metadata"] = cell_metadata
-
-            self.log.info(
-                "Cleared all previous outputs and execution metadata from notebook cells.")
-
-            # Persist the cleared notebook
-            update_cell_url = (
-                f"{self.base_url}workspace/{self.workspace_id}/notebook/{self.notebook_id}/update"
-            )
-
-            params = {
-                "run_id": self.run_id,
-                "save_as_snapshot": "true"
-            }
-
-            update_cells_response = self.hook._api_request(
-                "POST", update_cell_url, self.notebook_json, params
-            )
-
-            self.log.info(
-                f"Notebook clear-output update response: {update_cells_response.status_code}")
-
-            if update_cells_response.status_code == 200:
-                self.log.info("Notebook cells cleared successfully.")
-            else:
-                raise Exception(
-                    f"Failed to clear notebook cells. Status code: {update_cells_response.status_code}, Message: {update_cells_response.text}"
-                )
-
-        except Exception as e:
-            self.log.error(
-                f"An error occurred while clearing notebook cells: {e}")
-            raise
-
     def update_notebook_cells(self):
         try:
             if not self.cell_output_data:
@@ -593,10 +548,9 @@ class YeeduNotebookRunOperator:
                 for output in cell.get("outputs", []):
                     output.pop("msg_id", None)
                     output.setdefault("output_type", "text")
-            
+
             params = {
-                "run_id": self.run_id,
-                "save_as_snapshot": "true"
+                "run_id": self.run_id
             }
 
             update_cell_url = (
@@ -1334,16 +1288,13 @@ class YeeduNotebookRunOperator:
                     rel.dispatch()
                     time.sleep(5)
 
-                    notebook_file_id, notebook_language = self.get_notebook_file_id()
+                    notebook_language = self.get_notebook_language()
 
-                    notebook_download_response = self.get_notebook_code_from_file(
-                        notebook_file_id)
+                    notebook_download_response = self.get_notebook_code_from_snapshot()
 
                     self.notebook_json = notebook_download_response
                     self.notebook_cells = notebook_download_response.get(
                         "cells", [])
-
-                    self.clear_notebook_cell_outputs()
 
                     session_id = str(uuid.uuid4())
 
@@ -1411,7 +1362,7 @@ class YeeduNotebookRunOperator:
 
                         # Check if connection is permanently lost or notebook instance stopped
                         if len(self.notebook_cells) != 0 and (notebook_status == "STOPPED" or
-                                                            (not ws_connected and self.ws_connection_permanently_lost)):
+                                                              (not ws_connected and self.ws_connection_permanently_lost)):
                             self.log.debug(
                                 "Setting notebook executed flag to False due to permanent connection loss.")
                             self.notebook_executed = False
