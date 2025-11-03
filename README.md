@@ -177,6 +177,7 @@ The `YeeduOperator` supports additional parameters for more complex use cases:
 | ------------ | -------------------------------------------------------- | ------------------------------------------------------------- |
 | `arguments`  | Arguments to pass to the job run                         | `arguments="--input /data/input.csv --output /data/output"`   |
 | `conf`       | Configuration list for Spark job runs (key=value format) | `conf=["spark.driver.memory=4g", "spark.executor.memory=8g"]` |
+| `cluster_ids` | Fallback cluster IDs if the current notebook execution fails due to any reason (eg. OOM). | `cluster_ids=[1,2,3]` |
 
 ### Example with Advanced Configuration
 
@@ -194,6 +195,7 @@ spark_job_task = YeeduOperator(
         "spark.executor.memory=8g",
         "spark.executor.instances=2"
     ],
+    cluster_ids=[1,2,3],
     dag=dag,
 )
 ```
