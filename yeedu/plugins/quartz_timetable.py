@@ -26,8 +26,15 @@ class QuartzTimetable(Timetable):
 
     @property
     def description(self) -> str:
+        QUARTZ_TO_UNIX_DOW = {"1": "0", "2": "1", "3": "2", "4": "3", "5": "4", "6": "5", "7": "6"}
+
+        def quartz_to_unix_cron(cron_expr: str) -> str:
+            for q, u in QUARTZ_TO_UNIX_DOW.items():
+                cron_expr = cron_expr.replace(q + "L", u + "L")
+                cron_expr = cron_expr.replace(q, u)
+            return cron_expr
         try:
-            return get_description(self.cron_expression)
+            return get_description(quartz_to_unix_cron(self.cron_expression))
         except (FormatException, ValueError) as e:
             # Log the error for debugging
             import logging
@@ -188,7 +195,7 @@ class QuartzTimetable(Timetable):
         }
         # Weekday names mapping to Quartz numeric values (Sun=1 … Sat=7)
         dow_names = {
-            'SUN': 1, 'MON': 2, 'TUE': 3, 'WED': 4, 'THU': 5, 'FRI': 6, 'SAT': 7,
+            'SUN': 0, 'MON': 1, 'TUE': 2, 'WED': 3, 'THU': 4, 'FRI': 5, 'SAT': 6,
         }
 
         # Parse simple time fields
