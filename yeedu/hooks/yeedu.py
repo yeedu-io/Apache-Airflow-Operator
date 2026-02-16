@@ -406,7 +406,7 @@ class YeeduHook(BaseHook):
                 else:
                     raise AirflowException(response_json)
             else:
-                raise AirflowException(response_json)
+                raise AirflowException(response.text)
 
         except Exception as e:
             raise AirflowException(e)

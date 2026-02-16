@@ -230,7 +230,15 @@ class YeeduOperator(BaseOperator):
                 cluster_ids=self.cluster_ids,
                 logger=self.log.getChild("job_operator")
             )
-            return job_operator.execute(context)
+            try:
+                result = job_operator.execute(context)
+                # Push tracking info to XCom for email notifications
+                self._push_execution_info(ti, job_operator)
+                return result
+            except Exception as e:
+                # Push tracking info even on failure
+                self._push_execution_info(ti, job_operator)
+                raise
         elif self.job_type == "notebook":
             notebook_operator = YeeduNotebookRunOperator(
                 base_url=self.base_url,
@@ -245,7 +253,15 @@ class YeeduOperator(BaseOperator):
                 cluster_ids=self.cluster_ids,
                 logger=self.log.getChild("notebook_operator")
             )
-            return notebook_operator.execute(context)
+            try:
+                result = notebook_operator.execute(context)
+                # Push tracking info to XCom for email notifications
+                self._push_execution_info(ti, notebook_operator)
+                return result
+            except Exception as e:
+                # Push tracking info even on failure
+                self._push_execution_info(ti, notebook_operator)
+                raise
         elif self.job_type == "healthcheck":
             health_check_operator = YeeduHealthCheckOperator(
                 base_url=self.base_url,
@@ -255,6 +271,33 @@ class YeeduOperator(BaseOperator):
             return health_check_operator.execute(context)
         else:
             raise AirflowException(f"Unknown job_type: {self.job_type}")
+
+    def _push_execution_info(self, ti, operator) -> None:
+        """
+        Push execution tracking info to XCom for email notifications.
+
+        Args:
+            ti: TaskInstance from context
+            operator: The sub-operator (job or notebook) that was executed
+        """
+        try:
+            # Push cluster bump attempts if any
+            attempted_clusters = getattr(operator, 'attempted_clusters', [])
+            if attempted_clusters:
+                ti.xcom_push(key='yeedu_cluster_attempts',
+                             value=attempted_clusters)
+
+            # Push error summary if available
+            error_summary = getattr(operator, 'last_error_summary', None)
+            if error_summary:
+                ti.xcom_push(key='yeedu_error_summary', value=error_summary)
+
+            # Push Yeedu run URL
+            yeedu_url = getattr(operator, 'yeedu_run_url', None)
+            if yeedu_url:
+                ti.xcom_push(key='yeedu_run_url', value=yeedu_url)
+        except Exception as e:
+            self.log.warning(f"Failed to push execution info to XCom: {e}")
 
     def _validate_conf(self, conf: List[str]) -> List[str]:
         """

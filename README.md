@@ -232,36 +232,85 @@ workflow_notebook = YeeduOperator.partial(
 
 The package includes an `EmailNotificationHook` that enables sending styled email notifications about DAG and task statuses via Microsoft Graph API. This is useful for alerting stakeholders about job completions or failures.
 
+Email notifications include:
+
+- Direct links to DAG runs and task logs in the Airflow UI
+- Professional HTML styling with color-coded status indicators
+- Run information (duration, owner, execution date)
+- Error details for failed runs
+- Cluster bump information (when applicable)
+
 ### Setup Email Notifications
 
-1. Set up the following Airflow variables:
+1. **Required Airflow Variables** - Set up these variables for Microsoft Graph authentication:
 
    - `AIRFLOW_VAR_TENANT_ID`: Your Microsoft Azure tenant ID
    - `AIRFLOW_VAR_CLIENT_ID`: Your Microsoft application client ID
    - `AIRFLOW_VAR_CLIENT_SECRET`: Your Microsoft application client secret
    - `AIRFLOW_VAR_SENDER_EMAIL`: Email address that will send notifications
 
-2. Use the hook in your DAG:
+2. **Optional Airflow Configuration** - For clickable links in emails, configure the base URL:
+
+   - Set `base_url` in the `[api]` section of `airflow.cfg`:
+
+     ```ini
+     [api]
+     base_url = https://your-airflow-domain.com
+     ```
+
+   - **Alternative**: Set the Airflow variable `AIRFLOW_VAR_BASE_URL`:
+
+     ```text
+     Key: AIRFLOW_VAR_BASE_URL
+     Value: https://your-airflow-domain.com
+     ```
+
+   > **Note:** If not configured, links will default to `http://localhost:8080`
+
+3. Use the hook in your DAG:
 
 ```python
 from yeedu.hooks.email_notification import EmailNotificationHook
 
 def success_callback(context):
     email_hook = EmailNotificationHook()
-    email_hook.notify_dag(
+    ti = context['task_instance']
+    
+    # Pull Yeedu URL from XCom (automatically populated by YeeduOperator)
+    yeedu_url = ti.xcom_pull(key='yeedu_run_url')
+    
+    email_hook.notify_task(
         recipients=["recipient@example.com"],
-        dag_id=context['dag'].dag_id,
+        task_id=ti.task_id,
         run_id=context['run_id'],
-        status="success"
+        status="success",
+        context=context,
+        extra_info=yeedu_url
     )
 
 def failure_callback(context):
     email_hook = EmailNotificationHook()
+    ti = context['task_instance']
+    
+    # Pull execution details from XCom (automatically populated by YeeduOperator)
+    yeedu_url = ti.xcom_pull(key='yeedu_run_url')
+    error_summary = ti.xcom_pull(key='yeedu_error_summary') or str(context.get('exception', ''))
+    cluster_attempts = ti.xcom_pull(key='yeedu_cluster_attempts')
+    
+    # Format cluster bump info if clusters were attempted
+    cluster_info = None
+    if cluster_attempts:
+        cluster_info = f"Attempted clusters: {cluster_attempts}"
+    
     email_hook.notify_task(
         recipients=["recipient@example.com"],
-        task_id=context['task_instance'].task_id,
+        task_id=ti.task_id,
         run_id=context['run_id'],
-        status="failed"
+        status="failed",
+        context=context,
+        extra_info=yeedu_url,
+        error_summary=error_summary,
+        cluster_bump_info=cluster_info
     )
 
 # Add callbacks to your DAG
@@ -274,7 +323,24 @@ dag = DAG(
 )
 ```
 
-> **Note:** The email notifications include professionally styled HTML templates with color-coded status indicators.
+### Parameters
+
+| Parameter            | Description                                     | Example                                         |
+| -------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| `context`            | Airflow context for links and detailed info     | `context=context`                               |
+| `extra_info`         | Additional information or Yeedu URL             | `extra_info=ti.xcom_pull(key='yeedu_run_url')`  |
+| `error_summary`      | Error details for failed runs                   | `error_summary=ti.xcom_pull(key='yeedu_error_summary')` |
+| `cluster_bump_info`  | Cluster failover information                    | `cluster_bump_info="Attempted clusters: [10, 20]"` |
+
+### XCom Keys
+
+The `YeeduOperator` automatically pushes these values to XCom for use in callbacks:
+
+| Key                     | Description                                      |
+| ----------------------- | ------------------------------------------------ |
+| `yeedu_run_url`         | Direct URL to the Yeedu run metrics page         |
+| `yeedu_error_summary`   | Extracted error details from job/notebook stderr |
+| `yeedu_cluster_attempts`| List of cluster IDs attempted during bump        |
 
 ---
 

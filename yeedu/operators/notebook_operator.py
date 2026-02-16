@@ -82,6 +82,11 @@ class YeeduNotebookRunOperator:
         )
         self.log = logger
 
+        # Tracking for email notifications
+        self.attempted_clusters: list = []
+        self.last_error_summary: str = None
+        self.yeedu_run_url: str = None
+
     def _should_bump_cluster_from_logs(self, run_id: int) -> bool:
         """
         Inspect logs and workflow errors to decide if this failure qualifies for cluster bump.
@@ -118,6 +123,40 @@ class YeeduNotebookRunOperator:
                 f"Error checking logs for cluster bump eligibility: {e}")
             return False
 
+    def _build_error_summary(self, run_id: int = None) -> str:
+        """
+        Build a concise error summary from notebook execution for email notifications.
+
+        Args:
+            run_id: The run ID to fetch errors for (optional, uses self.run_id if not provided)
+
+        Returns:
+            A truncated error summary string
+        """
+        try:
+            # First check if we have cell-level error information
+            if self.error_name and self.error_value:
+                error_text = f"{self.error_name}: {self.error_value}"
+                return error_text[:1500] if len(error_text) > 1500 else error_text
+
+            # Try to get workflow errors
+            rid = run_id or self.run_id
+            if rid:
+                wf_errors = self.hook.get_notebook_workflow_errors(rid) or []
+                if wf_errors:
+                    error_text = "\n".join(wf_errors[-10:])
+                    return error_text[:1500] if len(error_text) > 1500 else error_text
+
+                # Fall back to stderr
+                stderr = self.hook.get_notebook_logs(
+                    rid, "stderr", last_n_lines=20) or ""
+                if stderr:
+                    return stderr[:1500] if len(stderr) > 1500 else stderr
+
+            return "No error details available"
+        except Exception as e:
+            return f"Failed to retrieve error details: {e}"
+
     def _can_bump_cluster(self) -> bool:
         """
         Check if cluster bump is possible (more clusters available).
@@ -152,6 +191,9 @@ class YeeduNotebookRunOperator:
         try:
             self.current_cluster_index += 1
             new_cluster_id = self.cluster_ids[self.current_cluster_index]
+
+            # Track attempted clusters for email notifications
+            self.attempted_clusters.append(new_cluster_id)
 
             # Stop current notebook instance
             self.stop_notebook()
@@ -202,6 +244,7 @@ class YeeduNotebookRunOperator:
                 notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{self.run_id}/run-metrics?type=notebook".replace(
                     f":{self.restapi_port}/api/v1", ""
                 )
+                self.yeedu_run_url = notebook_run_url  # Store for email notifications
                 self.log.info(
                     "Check Yeedu notebook run status and logs here " + notebook_run_url
                 )
@@ -1475,6 +1518,8 @@ class YeeduNotebookRunOperator:
 
         except Exception as e:
             self.log.error(f"Notebook execution failed with error:  {e}")
+            # Capture error summary for email notifications
+            self.last_error_summary = self._build_error_summary()
             raise e
         finally:
             if self.run_id is not None:

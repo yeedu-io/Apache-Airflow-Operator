@@ -55,6 +55,11 @@ class YeeduJobRunOperator:
         self.run_id: Optional[Union[int, None]] = None
         self.log = logger
 
+        # Tracking for email notifications
+        self.attempted_clusters: List[int] = []
+        self.last_error_summary: Optional[str] = None
+        self.yeedu_run_url: Optional[str] = None
+
     def _should_bump_cluster_from_logs(self, run_id: int) -> bool:
         """
         Inspect logs and workflow errors to decide if this failure qualifies for cluster bump.
@@ -89,6 +94,36 @@ class YeeduJobRunOperator:
             self.log.warning(
                 f"Failed log analysis for cluster bump decision: {e}")
             return False
+
+    def _build_error_summary(self, run_id: int, stderr: str = None) -> str:
+        """
+        Build a concise error summary from job logs for email notifications.
+
+        Args:
+            run_id: The run ID to fetch errors for
+            stderr: Pre-fetched stderr logs (optional)
+
+        Returns:
+            A truncated error summary string
+        """
+        try:
+            # Get workflow errors first (most relevant)
+            wf_errors = self.hook.get_job_workflow_errors(run_id) or []
+            if wf_errors:
+                # Last 10 workflow errors
+                error_text = "\n".join(wf_errors[-10:])
+                return error_text[:1500] if len(error_text) > 1500 else error_text
+
+            # Fall back to stderr
+            if stderr:
+                lines = stderr.strip().split('\n')
+                last_lines = lines[-20:] if len(lines) > 20 else lines
+                error_text = "\n".join(last_lines)
+                return error_text[:1500] if len(error_text) > 1500 else error_text
+
+            return "No error details available"
+        except Exception as e:
+            return f"Failed to retrieve error details: {e}"
 
     def run_job(self, cluster_id=None) -> tuple:
         """
@@ -132,6 +167,7 @@ class YeeduJobRunOperator:
             job_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{run_id}/run-metrics?type=spark_job".replace(
                 f":{self.restapi_port}/api/v1", ""
             )
+            self.yeedu_run_url = job_run_url
             self.log.info(
                 f"Job submitted with Run ID: {run_id}. Monitor at: {job_run_url}")
 
@@ -155,6 +191,9 @@ class YeeduJobRunOperator:
             if job_status in ["ERROR", "TERMINATED", "STOPPED"]:
                 self.log.error(
                     f"Job {run_id} failed with status: {job_status}")
+                # Capture error summary for notifications
+                self.last_error_summary = self._build_error_summary(
+                    run_id, job_log_stderr)
                 exception = AirflowException(
                     f"Job failed with status '{job_status}', logs: {job_log}")
                 return False, run_id, job_status, exception
@@ -243,6 +282,7 @@ class YeeduJobRunOperator:
             # Try on subsequent clusters
             total_attempts = len(available_clusters)
             for attempt, cluster_id in enumerate(available_clusters, start=1):
+                self.attempted_clusters.append(cluster_id)
                 self.log.info(
                     f"Cluster bump attempt {attempt}/{total_attempts}: switching to cluster {cluster_id}"
                 )
@@ -256,6 +296,8 @@ class YeeduJobRunOperator:
                     self.log.info(
                         f"Job {self.job_id} completed successfully after cluster bump to cluster {cluster_id}"
                     )
+                    # Clear error summary on success
+                    self.last_error_summary = None
                     return
 
                 # Check if we should continue bumping
