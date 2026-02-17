@@ -1,18 +1,17 @@
-import copy
-import json
-import socket
-import threading
-import time
-import uuid
-import websocket
-import ssl
-import rel
-import signal
-import re
-from datetime import datetime, timezone
-from airflow.exceptions import AirflowException
 from yeedu.hooks.yeedu import YeeduHook
-
+from airflow.exceptions import AirflowException
+from datetime import datetime, timezone
+import re
+import signal
+import rel
+import ssl
+import websocket
+import uuid
+import time
+import threading
+import socket
+import json
+import copy
 
 class YeeduNotebookRunOperator:
     content_status = None
@@ -708,20 +707,6 @@ class YeeduNotebookRunOperator:
                 self.error_value = content.get("evalue", "")
                 traceback = content.get("traceback", [])
 
-                # Check if this error qualifies for cluster bump
-                if self._should_bump_cluster_from_error(self.error_name, self.error_value, traceback):
-                    if self._can_bump_cluster():
-                        self.log.info(
-                            f"Error qualifies for cluster bump: {self.error_name} - {self.error_value}")
-                        self.should_bump_cluster = True
-                        return  # Exit immediately to trigger cluster bump
-                    else:
-                        # Final cluster failure - no more clusters available
-                        self.log.error(
-                            f"Bump-eligible error occurred on final cluster: {self.error_name} - {self.error_value}")
-                        self.notebook_executed = False
-                        return  # Exit immediately to break the infinite wait
-
                 if traceback:
                     formatted_error_output = self.format_error_output(
                         traceback)
@@ -744,6 +729,23 @@ class YeeduNotebookRunOperator:
                     self.log.error("Traceback:")
                     for tb in traceback:
                         self.log.error(tb)
+
+                # Check if this error qualifies for cluster bump (AFTER saving the error)
+                if self._should_bump_cluster_from_error(self.error_name, self.error_value, traceback):
+                    # Save error to notebook before cluster bump or final failure
+                    self.update_notebook_cells()
+
+                    if self._can_bump_cluster():
+                        self.log.info(
+                            f"Error qualifies for cluster bump: {self.error_name} - {self.error_value}")
+                        self.should_bump_cluster = True
+                        return  # Exit immediately to trigger cluster bump
+                    else:
+                        # Final cluster failure - no more clusters available
+                        self.log.error(
+                            f"Bump-eligible error occurred on final cluster: {self.error_name} - {self.error_value}")
+                        self.notebook_executed = False
+                        return  # Exit immediately to break the infinite wait
 
             elif msg_type == "execute_input":
                 content = response.get("content", {})
