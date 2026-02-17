@@ -13,6 +13,7 @@ import socket
 import json
 import copy
 
+
 class YeeduNotebookRunOperator:
     content_status = None
     error_value = None
@@ -50,6 +51,7 @@ class YeeduNotebookRunOperator:
         self.cell_output_data = []
         self.execution_times = {}
         self.notebook_json = {}
+        self.cells_with_saved_outputs = set()
         # Cluster bump tracking
         # Start at -1 to indicate using notebook's default cluster
         self.current_cluster_index = -1
@@ -241,7 +243,7 @@ class YeeduNotebookRunOperator:
                 self.run_id = response.json().get("run_id")
 
                 notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{self.run_id}/run-metrics?type=notebook".replace(
-                    f":{self.restapi_port}/api/v1", ""
+                    f":{self.restapi_port}/api/v1", ":5173/"
                 )
                 self.yeedu_run_url = notebook_run_url  # Store for email notifications
                 self.log.info(
@@ -607,6 +609,8 @@ class YeeduNotebookRunOperator:
 
             if update_cells_response.status_code == 200:
                 self.log.info("Notebook cells updated successfully.")
+                # Track this cell as saved to prevent overwriting
+                self.cells_with_saved_outputs.add(msg_id_to_update)
                 return update_cells_response
             else:
                 raise Exception(
@@ -830,7 +834,8 @@ class YeeduNotebookRunOperator:
                         msg_id, {})["endTime"] = end_time
                     if self.cell_output_data:
                         self.update_notebook_cells()
-                    elif response.get("parent_header", {}).get("msg_type", {}) != "kernel_info_request":
+                    elif (response.get("parent_header", {}).get("msg_type", {}) != "kernel_info_request"
+                          and msg_id not in self.cells_with_saved_outputs):
                         self.log.debug(
                             f"No cell output data for message id ({msg_id}), adding empty output")
                         self.cell_output_data.append({
@@ -1448,6 +1453,7 @@ class YeeduNotebookRunOperator:
                         self.cell_output_data = []
                         self.execution_times = {}
                         self.notebook_json = {}
+                        self.cells_with_saved_outputs = set()
                         # Reset execution state for fresh start
                         self.notebook_executed = True
                         continue
@@ -1481,7 +1487,7 @@ class YeeduNotebookRunOperator:
 
                     if notebook_status in ["TERMINATED", "ERROR"]:
                         notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{self.run_id}/run-logs?log_type=stderr".replace(
-                            f":{self.restapi_port}/api/v1", ""
+                            f":{self.restapi_port}/api/v1", ":5173/"
                         )
                         raise AirflowException(
                             f"Notebook is in {notebook_status} state. \n Please check notebook logs for detailed error:{notebook_run_url}"

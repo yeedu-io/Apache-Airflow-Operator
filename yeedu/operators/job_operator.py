@@ -165,7 +165,7 @@ class YeeduJobRunOperator:
 
             # Generate job URL for monitoring
             job_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{run_id}/run-metrics?type=spark_job".replace(
-                f":{self.restapi_port}/api/v1", ""
+                f":{self.restapi_port}/api/v1", ":5173/"
             )
             self.yeedu_run_url = job_run_url
             self.log.info(
