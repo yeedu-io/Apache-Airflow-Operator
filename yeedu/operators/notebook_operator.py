@@ -196,6 +196,15 @@ class YeeduNotebookRunOperator:
             # Track attempted clusters for email notifications
             self.attempted_clusters.append(new_cluster_id)
 
+            # Save pending cell outputs before stopping notebook
+            if self.cell_output_data:
+                self.log.info(
+                    f"Saving {len(self.cell_output_data)} pending cell output(s) before cluster bump")
+                self.update_notebook_cells()
+            else:
+                self.log.info(
+                    "No pending cell outputs to save before cluster bump")
+
             # Stop current notebook instance
             self.stop_notebook()
 
@@ -772,6 +781,8 @@ class YeeduNotebookRunOperator:
                     if self._can_bump_cluster():
                         self.log.info(
                             f"OOM/Resource error detected in stream: {text_value[:200]}...")
+                        self.log.info(
+                            "Triggering cluster bump - outputs will be saved before restart")
                         self.should_bump_cluster = True
                     else:
                         self.log.error(
