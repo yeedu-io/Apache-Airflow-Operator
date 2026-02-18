@@ -197,13 +197,7 @@ class YeeduNotebookRunOperator:
             self.attempted_clusters.append(new_cluster_id)
 
             # Save pending cell outputs before stopping notebook
-            if self.cell_output_data:
-                self.log.info(
-                    f"Saving {len(self.cell_output_data)} pending cell output(s) before cluster bump")
-                self.update_notebook_cells()
-            else:
-                self.log.info(
-                    "No pending cell outputs to save before cluster bump")
+            self.save_pending_outputs(reason="before cluster bump")
 
             # Stop current notebook instance
             self.stop_notebook()
@@ -223,6 +217,33 @@ class YeeduNotebookRunOperator:
 
         except Exception as e:
             self.log.error(f"Failed to bump cluster: {e}")
+            return False
+
+    def save_pending_outputs(self, reason: str = "") -> bool:
+        """
+        Save pending cell outputs before state changes.
+
+        Args:
+            reason: Description of why outputs are being saved (for logging)
+
+        Returns:
+            bool: True if outputs were saved, False if no outputs to save
+        """
+        if not self.cell_output_data:
+            self.log.debug(
+                f"No pending outputs to save{' (' + reason + ')' if reason else ''}")
+            return False
+
+        output_count = len(self.cell_output_data)
+        self.log.info(
+            f"Saving {output_count} pending output(s){' - ' + reason if reason else ''}")
+
+        try:
+            self.update_notebook_cells()
+            self.log.info(f"Successfully saved {output_count} output(s)")
+            return True
+        except Exception as e:
+            self.log.error(f"Failed to save pending outputs: {e}")
             return False
 
     def create_notebook_instance(self):
@@ -252,7 +273,7 @@ class YeeduNotebookRunOperator:
                 self.run_id = response.json().get("run_id")
 
                 notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{self.run_id}/run-metrics?type=notebook".replace(
-                    f":{self.restapi_port}/api/v1", ":5173/"
+                    f":{self.restapi_port}/api/v1", ":5173"
                 )
                 self.yeedu_run_url = notebook_run_url  # Store for email notifications
                 self.log.info(
@@ -634,6 +655,10 @@ class YeeduNotebookRunOperator:
         try:
             if self.notebook_executed:
                 return 0
+
+            # Save any pending outputs before exiting
+            self.save_pending_outputs(reason="before exit")
+
             self.log.info(f"Notebook exited. Reason: {exit_reason}")
             self.notebook_cells.clear()
             if self.check_notebook_instance_status() in ["SUBMITTED", "RUNNING"]:
@@ -792,8 +817,21 @@ class YeeduNotebookRunOperator:
                             self.error_name = "ResourceLimitError"
                         if not self.error_value:
                             self.error_value = text_value.strip()[:500]
+
+                        # Append this output first, then save before marking as failed
+                        self.cell_output_data.append({
+                            "msg_id": msg_id,
+                            "output_type": "text",
+                            "Celloutput": text_value
+                        })
+
+                        # Save outputs BEFORE setting failed state
+                        self.save_pending_outputs(
+                            reason="final cluster resource error")
+
                         self.should_bump_cluster = False
                         self.notebook_executed = False
+                        return  # Exit early since we already appended output
 
                 self.cell_output_data.append({
                     "msg_id": msg_id,
@@ -831,6 +869,8 @@ class YeeduNotebookRunOperator:
                 if execution_state == "restarting":
                     self.log.error(
                         "Kernel restarting - marking execution as failed")
+                    # Save any pending outputs before marking as failed
+                    self.save_pending_outputs(reason="kernel restarting")
                     self.notebook_executed = False
                     if not self.error_name:
                         self.error_name = "KernelRestart"
@@ -934,6 +974,8 @@ class YeeduNotebookRunOperator:
                 elif self.content_status == "aborted":
                     self.log.warning(
                         f"Cell execution was aborted for message id ({msg_id})")
+                    # Save any pending outputs before marking as failed
+                    self.save_pending_outputs(reason="cell execution aborted")
                     self.log.debug(
                         "Setting notebook executed flag to False due to cell abort.")
                     self.notebook_executed = False
@@ -1476,6 +1518,9 @@ class YeeduNotebookRunOperator:
                         return 0
 
                     # If execution failed and no cluster bump available, proceed with error handling
+                    # Save any pending outputs before cleanup
+                    self.save_pending_outputs(reason="before failure cleanup")
+
                     if self.check_notebook_instance_status() not in ["STOPPED", "TERMINATED", "ERROR"]:
                         self.log.debug(
                             "Exiting notebook due to cell execution failure.")
@@ -1498,7 +1543,7 @@ class YeeduNotebookRunOperator:
 
                     if notebook_status in ["TERMINATED", "ERROR"]:
                         notebook_run_url = f"{self.base_url}tenant/{self.tenant_id}/workspace/{self.workspace_id}/run/{self.run_id}/run-logs?log_type=stderr".replace(
-                            f":{self.restapi_port}/api/v1", ":5173/"
+                            f":{self.restapi_port}/api/v1", ":5173"
                         )
                         raise AirflowException(
                             f"Notebook is in {notebook_status} state. \n Please check notebook logs for detailed error:{notebook_run_url}"
