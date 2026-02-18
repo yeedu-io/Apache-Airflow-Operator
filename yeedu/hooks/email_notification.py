@@ -59,25 +59,17 @@ class EmailNotificationHook(BaseHook):
         Airflow 3.x moved [webserver] base_url to [api] base_url.
         Falls back to Variable if config is not set.
         """
-        # Try Airflow 3.x location first
-        try:
-            base_url = airflow_conf.get("api", "base_url")
-            if base_url:
-                return base_url.rstrip('/')
-        except Exception:
-            pass
-
-        # Fall back to Airflow 2.x location
-        try:
-            base_url = airflow_conf.get("webserver", "base_url")
-            if base_url:
-                return base_url.rstrip('/')
-        except Exception:
-            pass
-
-        # Final fallback: check Airflow Variable
+        # Check Airflow Variable
         try:
             base_url = Variable.get("AIRFLOW_VAR_BASE_URL", default_var=None)
+            if base_url:
+                return base_url.rstrip('/')
+        except Exception:
+            pass
+
+        # Final fallback: Try Airflow 3.x location first
+        try:
+            base_url = airflow_conf.get("api", "base_url")
             if base_url:
                 return base_url.rstrip('/')
         except Exception:
