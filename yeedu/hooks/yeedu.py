@@ -406,7 +406,7 @@ class YeeduHook(BaseHook):
                 else:
                     raise AirflowException(response_json)
             else:
-                raise AirflowException(response_json)
+                raise AirflowException(response.text)
 
         except Exception as e:
             raise AirflowException(e)
@@ -427,20 +427,29 @@ class YeeduHook(BaseHook):
                 f"Failed to retrieve status for job run ID {run_id}: {e}")
             raise AirflowException(e)
 
-    def get_job_logs(self, run_id: int, log_type: str) -> str:
+    def get_job_logs(self, run_id: int, log_type: str, last_n_lines: int = None) -> str:
         """
         Retrieves logs for a Yeedu job.
 
         :param run_id: The ID of the job.
         :param log_type: The type of logs to retrieve ('stdout' or 'stderr').
-        :return: The logs for the specified job and log type.
-        """
+        :param last_n_lines: Optional number of last lines to retrieve from the logs.
 
+        :return: The log content as a string for the specified job run and log type.
+        """
         try:
+            self.log.info(
+                f"Fetching logs for job run {run_id}, log type: {log_type}, last_n_lines: {last_n_lines}")
+
             logs_url: str = self.base_url + \
                 f'workspace/{self.workspace_id}/spark/job/run/{run_id}/log/{log_type}'
-            time.sleep(40)
-            return self._api_request('GET', logs_url).text
+
+            params = {}
+
+            if last_n_lines is not None:
+                params["last_n_lines"] = last_n_lines
+
+            return self._api_request('GET', logs_url, params=params).text
 
         except Exception as e:
             raise AirflowException(e)
@@ -511,4 +520,117 @@ class YeeduHook(BaseHook):
             return response
         except Exception as e:
             self.log.error(f"Failed to retrieve user info: {e}")
+            raise AirflowException(e)
+
+    def update_notebook_cluster(self, notebook_id: int, cluster_id: int):
+        """
+        Update a notebook's configuration to point to a specific cluster.
+        """
+        try:
+            self.log.info(
+                f"Updating notebook {notebook_id} to use cluster {cluster_id}")
+
+            url = self.base_url + f"workspace/{self.workspace_id}/notebook"
+            params = {"notebook_id": notebook_id}
+            payload = {
+                "cluster_id": int(cluster_id)
+            }
+
+            resp = self._api_request('PUT', url, data=payload, params=params)
+            if resp.status_code not in [200, 201]:
+                raise AirflowException(
+                    f"Failed to update notebook cluster. Status: {resp.status_code}, Body: {resp.text}")
+            return resp
+        except Exception as e:
+            self.log.error(f"Notebook cluster update failed: {e}")
+            raise AirflowException(e)
+
+    def update_job_cluster(self, job_id: int, cluster_id: int):
+        """
+        Update a spark job's configuration to point to a specific cluster.
+        """
+        try:
+            self.log.info(f"Updating job {job_id} to use cluster {cluster_id}")
+            url = self.base_url + f"workspace/{self.workspace_id}/spark/job"
+            params = {"job_id": job_id}
+            payload = {
+                "cluster_id": int(cluster_id)
+            }
+
+            resp = self._api_request('PUT', url, data=payload, params=params)
+            if resp.status_code not in [200, 201]:
+                raise AirflowException(
+                    f"Failed to update job cluster. Status: {resp.status_code}, Body: {resp.text}")
+            return resp
+        except Exception as e:
+            self.log.error(f"Job cluster update failed: {e}")
+            raise AirflowException(e)
+
+    def get_notebook_logs(self, run_id: int, log_type: str, last_n_lines: int = None) -> str:
+        """
+        Retrieve logs for a Yeedu notebook run.
+
+        :param run_id: The ID of the notebook run.
+        :param log_type: The type of logs to retrieve ('stdout' or 'stderr').
+        :param last_n_lines: Optional number of last lines to retrieve from the logs.
+
+        :return: The log content as a string for the specified notebook run and log type.
+        """
+        try:
+            self.log.info(
+                f"Fetching logs for notebook run {run_id}, log type: {log_type}, last_n_lines: {last_n_lines}")
+            logs_url: str = self.base_url + \
+                f"workspace/{self.workspace_id}/notebook/run/{run_id}/log/{log_type}"
+
+            params = {}
+
+            if last_n_lines is not None:
+                params["last_n_lines"] = last_n_lines
+
+            return self._api_request('GET', logs_url, params=params).text
+        except Exception as e:
+            self.log.error(
+                f"Failed to fetch notebook logs for run {run_id}: {e}")
+            raise AirflowException(e)
+
+    def get_notebook_workflow_errors(self, run_id: int) -> List[str]:
+        """
+        Retrieve workflow errors for a notebook run.
+
+        Endpoint: /workspace/{workspace_id}/notebook/run/{run_id}/workflow/errors
+        Returns a list of error strings (may be empty).
+        """
+        try:
+            url = self.base_url + \
+                f"workspace/{self.workspace_id}/notebook/run/{run_id}/workflow/errors"
+            resp = self._api_request('GET', url)
+            if resp.status_code == 200:
+                payload = resp.json() or {}
+                data = payload.get("data", []) or []
+                return [str(d.get("error", "")) for d in data if d]
+            return []
+        except Exception as e:
+            self.log.warning(
+                f"Failed to fetch notebook workflow errors for run {run_id}: {e}")
+            raise AirflowException(e)
+
+    def get_job_workflow_errors(self, run_id: int) -> List[str]:
+        """
+        Retrieve workflow errors for a spark job run.
+
+        Endpoint: /workspace/{workspace_id}/spark/job/run/{run_id}/workflow/errors
+        Returns a list of error strings (may be empty).
+        """
+        try:
+            url = self.base_url + \
+                f"workspace/{self.workspace_id}/spark/job/run/{run_id}/workflow/errors"
+            resp = self._api_request('GET', url)
+            if resp.status_code == 200:
+                payload = resp.json() or {}
+                data = payload.get("data", []) or []
+                return [str(d.get("error", "")) for d in data if d]
+            return []
+        except Exception as e:
+            self.log.warning(
+                f"Failed to fetch job workflow errors for run {run_id}: {e}")
             raise AirflowException(e)
