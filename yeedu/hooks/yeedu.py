@@ -183,6 +183,7 @@ class YeeduHook(BaseHook):
                 return response
 
             # Normal retry logic
+            last_request_exc = None
             while attempts_failure < max_attempts:
                 try:
                     response = self.session.request(
@@ -208,6 +209,7 @@ class YeeduHook(BaseHook):
                         time.sleep(delay)
 
                 except Exception as e:
+                    last_request_exc = e
                     attempts_failure += 1
                     self.log.warning(
                         f"API request failed due to exception: {e} (attempt {attempts_failure}/{max_attempts})")
@@ -218,10 +220,10 @@ class YeeduHook(BaseHook):
             if response is not None:
                 error_message += f": {response.text}"
 
-            raise AirflowException(error_message)
+            raise AirflowException(error_message) from last_request_exc
 
         except Exception as e:
-            raise AirflowException(f"API request error: {e}")
+            raise AirflowException(f"API request error: {e}") from e
 
     def check_token(self):
         """
@@ -267,7 +269,7 @@ class YeeduHook(BaseHook):
 
         except Exception as e:
             self.log.error(f"Failed to retrieve authentication type: {e}")
-            raise AirflowException(e)
+            raise AirflowException(e) from e
 
     def yeedu_login(self, context):
         """
